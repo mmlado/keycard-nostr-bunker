@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=77"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "keycard-bunker"
+dynamic = ["version"]
+description = "NIP-46 Nostr remote signer (bunker) backed by a Keycard"
+readme = "README.md"
+license = "MIT"
+license-files = ["LICENSE"]
+requires-python = ">=3.11"
+authors = [{name = "Mladen Milankovic"}]
+dependencies = [
+    "keycard>=0.4.0",
+    "websockets>=13",
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "flake8", "mypy"]
+
+[project.urls]
+Homepage = "https://github.com/mmlado/keycard-bunker"
+
+[project.scripts]
+keycard-bunker = "keycard_bunker.cli:main"
+
+[tool.setuptools.packages.find]
+include = ["keycard_bunker*"]
+
+[tool.setuptools.dynamic]
+version = {attr = "keycard_bunker.__version__"}
+
+[tool.mypy]
+python_version = "3.11"
+
+[[tool.mypy.overrides]]
+module = ["ecdsa.*", "smartcard.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
