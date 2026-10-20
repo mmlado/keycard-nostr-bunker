@@ -1,0 +1,71 @@
+name: Test
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_call:
+
+jobs:
+  test-matrix:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.11", "3.12", "3.13", "3.14"]
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v7
+      with:
+        python-version: ${{ matrix.python-version }}
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
+
+    - name: Install dependencies
+      run: pip install -e ".[dev]"
+
+    - name: Run tests
+      run: pytest --maxfail=1 --disable-warnings --exitfirst
+
+  lint:
+    runs-on: ubuntu-24.04
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v7
+
+    - name: Set up Python
+      uses: actions/setup-python@v7
+      with:
+        python-version: "3.13"
+
+    - name: Install system dependencies
+      run: sudo apt-get update && sudo apt-get install -y libpcsclite-dev
+
+    - name: Install dependencies
+      run: pip install -e ".[dev]"
+
+    - name: Lint
+      run: flake8 keycard_bunker tests tools
+
+    - name: Type check
+      run: mypy keycard_bunker
+
+  test:
+    runs-on: ubuntu-24.04
+    needs: [test-matrix, lint]
+    if: always()
+    steps:
+    - name: Check results
+      run: |
+        if [[ "${{ needs.test-matrix.result }}" != "success" || "${{ needs.lint.result }}" != "success" ]]; then
+          echo "Tests failed"
+          exit 1
+        fi
+        echo "All tests passed"
