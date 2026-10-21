@@ -1,12 +1,10 @@
-"""The run loop with in-memory relays: reply fan-out, approver choice, secret rotation."""
+"""The run loop with in-memory relays: approver choice and secret rotation."""
 
 import asyncio
 import json
 import logging
 import threading
 import time
-
-import pytest
 
 from keycard_nostr_bunker import cli, nip01, nip44
 from keycard_nostr_bunker.cli import TerminalApprover, open_admission, run
@@ -96,18 +94,6 @@ def serve(cfg, events, failing=()):
     return transport, relays
 
 
-def test_reply_reaches_every_relay_when_one_fails(tmp_path):
-    cfg = config(tmp_path, authorized_clients=[CLIENT.pubkey.hex()])
-    transport, (a, b) = serve(cfg, [lambda t: request(t, 'ping', [])], failing={'wss://a.example'})
-    assert answer(transport, b.sent)['result'] == 'pong'
-
-
-def test_an_invalid_event_gets_no_reply(tmp_path):
-    cfg = config(tmp_path, authorized_clients=[CLIENT.pubkey.hex()])
-    _, (a, b) = serve(cfg, [lambda t: dict(request(t, 'ping', []), sig='00' * 64)])
-    assert a.sent == [] and b.sent == []
-
-
 def test_without_a_terminal_new_clients_wait(tmp_path, monkeypatch):
     monkeypatch.setattr(cli.sys, 'stdin', Stdin(tty=False))
     cfg = config(tmp_path, approve_clients=True)
@@ -139,28 +125,6 @@ def test_rotate_secret_rotates_and_announces(tmp_path, monkeypatch, caplog):
     assert answer(transport, b.sent)['result'] == 'ack'
     assert open_admission(cfg).secret != secret
     assert 'Secret rotated' in caplog.text
-
-
-@pytest.mark.parametrize('message', [['NOTICE', 'hello'], ['OK', 'ab', True, ''], ['EOSE', 'x'],
-                                     ['WHAT']])
-def test_other_relay_messages_are_only_logged(tmp_path, message):
-    cfg = config(tmp_path)
-    transport = SoftwareSigner.load_or_generate(cfg.signer.key_file)
-    relays = []
-
-    async def main():
-        stop = asyncio.Event()
-        task = asyncio.create_task(run(
-            cfg, transport, USER,
-            relay_factory=lambda *args: relays.append(FakeRelay(*args)) or relays[-1], stop=stop))
-        while len(relays) < 2:
-            await asyncio.sleep(0)
-        await relays[0].handler(message, relays[0])
-        stop.set()
-        await task
-
-    asyncio.run(main())
-    assert relays[0].sent == [] and relays[1].sent == []
 
 
 def test_announcements_wait_for_an_open_prompt(monkeypatch, capsys):

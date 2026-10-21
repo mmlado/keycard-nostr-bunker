@@ -19,7 +19,7 @@ from .card import CardError, KeycardSigner, list_readers
 from .config import Config, load_config
 from .nip46 import Bunker
 from .perms import Permissions
-from .relay import Relay, RelayConn, RelayFactory
+from .relay import RelayConn, RelayFactory, RelayPool
 from .signer import Signer, SoftwareSigner
 from .replay import ReplayWindow
 from .state import StateDir
@@ -277,46 +277,20 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer,
     admission = open_admission(cfg, approver, on_rotate=rotated)
     log.info('Admitted clients: %d', len(admission.clients()))
     bunker = Bunker(transport, user, cfg.signing, admission, ReplayWindow(state(cfg).seen))
-    conns: list[Relay] = []
+    pool = RelayPool(cfg.relay.urls, transport.pubkey.hex(), bunker.handle, relay_factory)
     if stop is None:
         stop = asyncio.Event()
         loop = asyncio.get_running_loop()
         for sig in (signal.SIGINT, signal.SIGTERM):
             loop.add_signal_handler(sig, stop.set)
-
-    async def on_message(message: list, relay: Relay) -> None:
-        match message:
-            case ['EVENT', _, dict() as event]:
-                try:
-                    reply = await asyncio.to_thread(bunker.handle, event, relay.url)
-                except Exception:
-                    log.exception('NIP-46 request handling failed')
-                    return
-                if reply:
-                    await asyncio.gather(*(conn.send(['EVENT', reply]) for conn in conns),
-                                         return_exceptions=True)
-            case ['OK', event_id, accepted, *rest]:
-                log.debug('Event %s %s %s', str(event_id)[:8],
-                          'accepted' if accepted else 'rejected', rest[0] if rest else '')
-            case ['NOTICE', text]:
-                log.info('Relay notice from %s: %s', relay.url, text)
-            case ['EOSE', _]:
-                log.debug('EOSE from %s', relay.url)
-            case _:
-                log.debug('Ignored relay message: %s', message[0])
-
-    for url in cfg.relay.urls:
-        conn = relay_factory(url, transport.pubkey.hex(), on_message)
-        conn.start()
-        conns.append(conn)
+    pool.start()
 
     show_url(current_url(cfg, transport, admission.secret), 'Bunker ready')
     try:
         await stop.wait()
     finally:
         log.info('Shutting down')
-        for conn in conns:
-            await conn.stop()
+        await pool.stop()
 
 
 def build_parser() -> argparse.ArgumentParser:

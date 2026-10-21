@@ -1,10 +1,11 @@
 import asyncio
 import json
 
+import pytest
 from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
-from keycard_nostr_bunker.relay import RelayConn
+from keycard_nostr_bunker.relay import RelayConn, RelayPool
 
 
 class FakeWs:
@@ -119,3 +120,81 @@ def test_closed_for_another_subscription_is_passed_on():
     conn = RelayConn('wss://r', 'ab', handler)
     asyncio.run(conn._dispatch(json.dumps(['CLOSED', 'other', 'x'])))
     assert seen == [['CLOSED', 'other', 'x']] and conn._resubscribe_task is None
+
+
+class FakeRelay:
+    def __init__(self, url, pubkey, handler, fail=False):
+        self.url, self.handler, self.fail = url, handler, fail
+        self.sent = []
+        self.started = self.stopped = False
+
+    def start(self):
+        self.started = True
+
+    async def stop(self):
+        self.stopped = True
+
+    async def send(self, message):
+        if self.fail:
+            raise ConnectionError('relay gone')
+        self.sent.append(message)
+        return True
+
+
+def pool_with(serve, failing=()):
+    relays = []
+
+    def factory(url, pubkey, handler):
+        relays.append(FakeRelay(url, pubkey, handler, fail=url in failing))
+        return relays[-1]
+
+    pool = RelayPool(['wss://a', 'wss://b', 'wss://c'], 'ab', serve, factory)
+    return pool, relays
+
+
+def deliver(relay, message):
+    asyncio.run(relay.handler(message, relay))
+
+
+def test_a_reply_goes_to_every_relay_even_if_one_fails():
+    served = []
+
+    def serve(event, source):
+        served.append((event, source))
+        return {'id': 'reply'}
+
+    pool, (a, b, c) = pool_with(serve, failing={'wss://b'})
+    deliver(a, ['EVENT', 'nip46', {'id': 'request'}])
+    assert served == [({'id': 'request'}, 'wss://a')]
+    assert a.sent == c.sent == [['EVENT', {'id': 'reply'}]]
+
+
+def test_no_reply_sends_nothing():
+    pool, relays = pool_with(lambda event, source: None)
+    deliver(relays[0], ['EVENT', 'nip46', {'id': 'request'}])
+    assert all(r.sent == [] for r in relays)
+
+
+def test_a_failing_request_is_logged_and_contained(caplog):
+    def serve(event, source):
+        raise RuntimeError('broken')
+
+    pool, relays = pool_with(serve)
+    deliver(relays[0], ['EVENT', 'nip46', {'id': 'request'}])
+    assert all(r.sent == [] for r in relays)
+    assert 'request handling failed' in caplog.text
+
+
+@pytest.mark.parametrize('message', [['NOTICE', 'hello'], ['OK', 'ab', True, ''], ['EOSE', 'x'],
+                                     ['EVENT', 'nip46', 'not an object'], ['WHAT']])
+def test_other_messages_are_only_logged(message):
+    pool, relays = pool_with(lambda event, source: pytest.fail('served'))
+    deliver(relays[0], message)
+    assert all(r.sent == [] for r in relays)
+
+
+def test_start_and_stop_reach_every_relay():
+    pool, relays = pool_with(lambda event, source: None)
+    pool.start()
+    asyncio.run(pool.stop())
+    assert all(r.started and r.stopped for r in relays)

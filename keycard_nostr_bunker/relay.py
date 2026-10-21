@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Awaitable, Callable, Protocol
+from typing import Any, Awaitable, Callable, Protocol
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
@@ -134,3 +134,49 @@ class RelayConn:
         # A new connection has already subscribed on its own.
         if ws is not None and self._ws is ws:
             await self._subscribe()
+
+
+Serve = Callable[[dict[str, Any], str], dict[str, Any] | None]
+
+
+class RelayPool:
+    """Every relay the bunker uses: requests come in from any, replies go out to all.
+
+    serve turns a request event and the URL it came from into a reply event, or
+    None; it runs on a worker thread, so a slow card does not stall the relays.
+    """
+
+    def __init__(self, urls: list[str], pubkey_hex: str, serve: Serve,
+                 factory: RelayFactory = RelayConn):
+        self._serve = serve
+        self._relays = [factory(url, pubkey_hex, self._on_message) for url in urls]
+
+    def start(self) -> None:
+        for relay in self._relays:
+            relay.start()
+
+    async def stop(self) -> None:
+        for relay in self._relays:
+            await relay.stop()
+
+    async def _on_message(self, message: list, relay: Relay) -> None:
+        match message:
+            case ['EVENT', _, dict() as event]:
+                try:
+                    reply = await asyncio.to_thread(self._serve, event, relay.url)
+                except Exception:
+                    log.exception('NIP-46 request handling failed')
+                    return
+                if reply:
+                    # One relay failing must not keep the reply from the others.
+                    await asyncio.gather(*(r.send(['EVENT', reply]) for r in self._relays),
+                                         return_exceptions=True)
+            case ['OK', event_id, accepted, *rest]:
+                log.debug('Event %s %s %s', str(event_id)[:8],
+                          'accepted' if accepted else 'rejected', rest[0] if rest else '')
+            case ['NOTICE', text]:
+                log.info('Relay notice from %s: %s', relay.url, text)
+            case ['EOSE', _]:
+                log.debug('EOSE from %s', relay.url)
+            case _:
+                log.debug('Ignored relay message: %s', message[0])
