@@ -3,6 +3,7 @@
 import asyncio
 import json
 import logging
+import threading
 import time
 
 import pytest
@@ -11,6 +12,7 @@ from keycard_nostr_bunker import cli, nip01, nip44
 from keycard_nostr_bunker.cli import TerminalApprover, open_admission, run
 from keycard_nostr_bunker.config import Config
 from keycard_nostr_bunker.nip46 import KIND
+from keycard_nostr_bunker.perms import Permissions
 from keycard_nostr_bunker.signer import SoftwareSigner
 
 USER = SoftwareSigner((3).to_bytes(32, 'big'))
@@ -159,3 +161,40 @@ def test_other_relay_messages_are_only_logged(tmp_path, message):
 
     asyncio.run(main())
     assert relays[0].sent == [] and relays[1].sent == []
+
+
+def test_announcements_wait_for_an_open_prompt(monkeypatch, capsys):
+    approver = TerminalApprover()
+    opened, answered = threading.Event(), threading.Event()
+
+    def ask(self, client, perms):
+        print('PROMPT', flush=True)
+        opened.set()
+        answered.wait(5)
+        return True
+
+    monkeypatch.setattr(TerminalApprover, '_ask', ask)
+    worker = threading.Thread(target=approver, args=(CLIENT.pubkey.hex(), Permissions(None)))
+    worker.start()
+    assert opened.wait(5)
+    approver.announce('URL')
+    assert capsys.readouterr().out == 'PROMPT\n'
+    answered.set()
+    worker.join()
+    assert capsys.readouterr().out == 'URL\n'
+    approver.announce('NOW')
+    assert capsys.readouterr().out == 'NOW\n'
+
+
+def test_rotation_is_announced_through_the_prompt(tmp_path, monkeypatch):
+    monkeypatch.setattr(cli.sys, 'stdin', Stdin(tty=True))
+    monkeypatch.setattr(cli.sys.stdout, 'isatty', lambda: True)
+    monkeypatch.setattr(TerminalApprover, '_ask', lambda self, client, perms: True)
+    said = []
+    monkeypatch.setattr(TerminalApprover, 'announce', lambda self, text: said.append(text))
+    cfg = config(tmp_path, approve_clients=True, rotate_secret=True)
+    secret = open_admission(cfg).secret
+    transport, (a, b) = serve(cfg, [lambda t: request(t, 'connect', [t.pubkey.hex(), secret])])
+    assert answer(transport, b.sent)['result'] == 'ack'
+    [text] = said
+    assert open_admission(cfg).secret in text and text.strip().startswith('bunker://')

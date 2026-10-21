@@ -72,26 +72,50 @@ def current_url(cfg: Config, transport: SoftwareSigner, secret: str) -> str:
     return bunker_url(transport.pubkey.hex(), cfg.relay.urls, secret)
 
 
-def show_url(url: str, reason: str) -> None:
+def show_url(url: str, reason: str, say: Callable[[str], None] = print) -> None:
     """Print the URL on a terminal only; it carries the secret and logs persist."""
     if sys.stdout.isatty():
-        print(f'\n{url}\n', flush=True)
+        say(f'\n{url}\n')
     else:
         log.info('%s; run "keycard-nostr-bunker url" to show the bunker URL', reason)
 
 
 class TerminalApprover:
-    """Asks at the terminal. A client that arrives while a prompt is open stays pending."""
+    """Asks at the terminal. A client that arrives while a prompt is open stays pending.
+
+    Other text for the terminal goes through announce, so it never lands inside
+    an open prompt.
+    """
 
     def __init__(self, timeout: float = APPROVAL_TIMEOUT):
         self._timeout = timeout
         self._busy = threading.Lock()
+        self._out = threading.Lock()
+        self._prompting = False
+        self._held: list[str] = []
+
+    def announce(self, text: str) -> None:
+        """Print now, or as soon as the open prompt has its answer."""
+        with self._out:
+            if self._prompting:
+                self._held.append(text)
+            else:
+                print(text, flush=True)
 
     def __call__(self, client: str, perms: Permissions) -> bool | None:
         if not self._busy.acquire(blocking=False):
             return None
         try:
-            return self._ask(client, perms)
+            with self._out:
+                self._prompting = True
+            try:
+                return self._ask(client, perms)
+            finally:
+                with self._out:
+                    self._prompting = False
+                    held, self._held = self._held, []
+                    for text in held:
+                        print(text, flush=True)
         finally:
             self._busy.release()
 
@@ -248,8 +272,10 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer,
         how = 'a prompt here' if interactive else 'keycard-nostr-bunker clients approve <pubkey>'
         log.info('New clients need approval: %s', how)
 
+    say = approver.announce if isinstance(approver, TerminalApprover) else print
+
     def rotated() -> None:
-        show_url(current_url(cfg, transport, admission.secret), 'Secret rotated')
+        show_url(current_url(cfg, transport, admission.secret), 'Secret rotated', say)
 
     admission = open_admission(cfg, approver, on_rotate=rotated)
     log.info('Admitted clients: %d', len(admission.clients()))
