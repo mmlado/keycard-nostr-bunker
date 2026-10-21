@@ -16,10 +16,9 @@ from urllib.parse import parse_qs, urlparse
 
 from websockets.asyncio.client import connect
 
-from keycard_nostr_bunker import nip01, nip04, nip44, schnorr
+from keycard_nostr_bunker import envelope
 from keycard_nostr_bunker.signer import SoftwareSigner
 
-KIND = 24133
 # Long enough to cover the bunker's 60 s approval prompt.
 REPLY_TIMEOUT = 90
 
@@ -39,30 +38,19 @@ async def run(url: str, calls: list[tuple[str, list]], legacy: bool, key: str | 
     shared = client.ecdh(bytes.fromhex(bunker))
     print(f'client pubkey {client.pubkey.hex()}  (prompt code {client.pubkey.hex()[:4]})')
 
-    def encrypt(text: str) -> str:
-        if legacy:
-            return nip04.encrypt(text, shared)
-        return nip44.encrypt(text, nip44.conversation_key(shared))
-
-    def decrypt(text: str) -> str:
-        if legacy:
-            return nip04.decrypt(text, shared)
-        return nip44.decrypt(text, nip44.conversation_key(shared))
-
     failures = 0
     async with connect(relays[0]) as ws:
-        await ws.send(json.dumps(['REQ', 'client', {'kinds': [KIND], '#p': [client.pubkey.hex()],
+        await ws.send(json.dumps(['REQ', 'client', {'kinds': [envelope.KIND],
+                                                    '#p': [client.pubkey.hex()],
                                                     'since': int(time.time()) - 10}]))
         for method, params in [('connect', [bunker, secret, perms])] + calls:
             # A fresh id per request, so a reply left on the relay by an earlier run never matches.
             request_id = os.urandom(8).hex()
             request = {'id': request_id, 'method': method, 'params': params}
-            event = nip01.finalize_event(
-                {'kind': KIND, 'tags': [['p', bunker]], 'content': encrypt(json.dumps(request))},
-                client.pubkey.hex(), client.sign)
+            event = envelope.seal(request, client, bunker, shared, legacy)
             await ws.send(json.dumps(['EVENT', event]))
             print(f'-> {method}')
-            reply = await wait_reply(ws, bunker, request_id, decrypt)
+            reply = await wait_reply(ws, bunker, request_id, shared)
             result = str(reply.get('result'))
             print(f'<- {method}: result={result[:80]!r} error={reply.get("error")!r}')
             if reply.get('error'):
@@ -72,7 +60,7 @@ async def run(url: str, calls: list[tuple[str, list]], legacy: bool, key: str | 
     return 1 if failures else 0
 
 
-async def wait_reply(ws, bunker: str, request_id: str, decrypt) -> dict:
+async def wait_reply(ws, bunker: str, request_id: str, shared: bytes) -> dict:
     deadline = time.monotonic() + REPLY_TIMEOUT
     while True:
         remaining = deadline - time.monotonic()
@@ -80,20 +68,15 @@ async def wait_reply(ws, bunker: str, request_id: str, decrypt) -> dict:
             raise TimeoutError(f'no reply within {REPLY_TIMEOUT}s')
         message = json.loads(await asyncio.wait_for(ws.recv(), remaining))
         event = message[2] if message[0] == 'EVENT' else {}
-        if event.get('pubkey') == bunker and signed_by(event, bunker):
-            reply = json.loads(decrypt(event['content']))
-            if reply.get('id') == request_id:
-                return reply
-
-
-def signed_by(event: dict, pubkey: str) -> bool:
-    try:
-        expected = nip01.event_id(pubkey, event['created_at'], event['kind'], event['tags'],
-                                  event['content'])
-        return (expected.hex() == event['id']
-                and schnorr.verify(bytes.fromhex(pubkey), expected, bytes.fromhex(event['sig'])))
-    except (KeyError, ValueError, TypeError):
-        return False
+        if event.get('pubkey') != bunker:
+            continue
+        try:
+            envelope.verify(event)
+            reply = envelope.unseal(event, shared)
+        except (ValueError, TypeError, KeyError):
+            continue
+        if reply.get('id') == request_id:
+            return reply
 
 
 def main() -> int:

@@ -5,7 +5,7 @@ import logging
 import re
 from typing import Any
 
-from . import nip01, nip04, nip44, schnorr
+from . import envelope, nip01, nip04, nip44
 from .admission import Admission, AdmissionError
 from .config import SigningConfig
 from .replay import ReplayWindow
@@ -13,7 +13,6 @@ from .signer import Signer, SignerUnavailable
 
 log = logging.getLogger(__name__)
 
-KIND = 24133
 METHODS = frozenset({'get_public_key', 'ping', 'sign_event', 'nip44_encrypt', 'nip44_decrypt',
                      'nip04_encrypt', 'nip04_decrypt'})
 
@@ -48,25 +47,21 @@ class Bunker:
 
         source names the relay it came from, for the pending list.
         """
-        if event.get('kind') != KIND:
+        if event.get('kind') != envelope.KIND:
             return None
         try:
-            client, event_id, created_at = self._verify(event)
-            if not self.replay.admit(event_id, created_at, self.admission.known(client)):
+            client = envelope.verify(event)
+            if not self.replay.admit(event['id'], event['created_at'],
+                                     self.admission.known(client)):
                 return None
         except (ValueError, TypeError, KeyError) as e:
             log.warning('NIP-46 rejected event: %s', e)
             return None
-        content = event['content']
-        # Older clients still encrypt the transport with NIP-04.
-        legacy = '?iv=' in content
+        legacy = envelope.is_legacy(event)
         try:
-            request = json.loads(self._decrypt(client, content, legacy))
+            request = envelope.unseal(event, self._transport_shared_x(client))
         except (ValueError, KeyError) as e:
             log.warning('NIP-46 bad request from %s: %s', client, e)
-            return None
-        if not isinstance(request, dict):
-            log.warning('NIP-46 bad request from %s: not an object', client)
             return None
         request_id = request.get('id')
         method = request.get('method')
@@ -96,22 +91,6 @@ class Bunker:
                 return None
         log.info('NIP-46 %s -> %s', method, error or 'ok')
         return reply
-
-    def _verify(self, event: dict[str, Any]) -> tuple[str, str, int]:
-        """Check the request event is well formed, recent, and signed by its pubkey."""
-        client, event_id, sig = event['pubkey'], event['id'], event['sig']
-        created_at, tags, content = event['created_at'], event.get('tags') or [], event['content']
-        if not (_hex(client, 64) and _hex(event_id, 64) and _hex(sig, 128)):
-            raise ValueError('pubkey, id or sig is not hex of the right length')
-        if isinstance(created_at, bool) or not isinstance(created_at, int):
-            raise ValueError('created_at is not an integer')
-        if not isinstance(content, str) or not isinstance(tags, list):
-            raise ValueError('content or tags has the wrong type')
-        if nip01.event_id(client, created_at, KIND, tags, content).hex() != event_id:
-            raise ValueError('id does not match the event')
-        if not schnorr.verify(bytes.fromhex(client), bytes.fromhex(event_id), bytes.fromhex(sig)):
-            raise ValueError(f'bad signature from {client}')
-        return client, event_id, created_at
 
     def _dispatch(self, method: str, params: list, client: str, source: str) -> str:
         if method == 'connect':
@@ -174,25 +153,10 @@ class Bunker:
                 self._transport_shared[client] = shared
         return shared
 
-    def _decrypt(self, client: str, content: str, legacy: bool) -> str:
-        shared = self._transport_shared_x(client)
-        if legacy:
-            return nip04.decrypt(content, shared)
-        return nip44.decrypt(content, nip44.conversation_key(shared))
-
-    def _encrypt(self, client: str, plaintext: str, legacy: bool) -> str:
-        shared = self._transport_shared_x(client)
-        if legacy:
-            return nip04.encrypt(plaintext, shared)
-        return nip44.encrypt(plaintext, nip44.conversation_key(shared))
-
     def _reply(self, client: str, request_id: Any, result: str, error: str | None,
                legacy: bool) -> dict[str, Any]:
-        response = json.dumps({'id': request_id, 'result': result, 'error': error})
-        return nip01.finalize_event(
-            {'kind': KIND, 'tags': [['p', client]],
-             'content': self._encrypt(client, response, legacy)},
-            self.transport.pubkey.hex(), self.transport.sign)
+        return envelope.seal({'id': request_id, 'result': result, 'error': error},
+                             self.transport, client, self._transport_shared_x(client), legacy)
 
 
 def _hex(value: Any, length: int) -> bool:

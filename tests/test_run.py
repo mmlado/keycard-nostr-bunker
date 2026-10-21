@@ -1,15 +1,12 @@
 """The run loop with in-memory relays: approver choice and secret rotation."""
 
 import asyncio
-import json
 import logging
 import threading
-import time
 
-from keycard_nostr_bunker import cli, nip01, nip44
+from keycard_nostr_bunker import cli, envelope
 from keycard_nostr_bunker.cli import TerminalApprover, open_admission, run
 from keycard_nostr_bunker.config import Config
-from keycard_nostr_bunker.nip46 import KIND
 from keycard_nostr_bunker.perms import Permissions
 from keycard_nostr_bunker.signer import SoftwareSigner
 
@@ -55,19 +52,14 @@ def config(tmp_path, **connection):
 
 
 def request(transport, method, params):
-    shared = nip44.conversation_key(CLIENT.ecdh(transport.pubkey))
-    body = json.dumps({'id': method, 'method': method, 'params': params})
-    return nip01.finalize_event(
-        {'kind': KIND, 'tags': [['p', transport.pubkey.hex()]],
-         'content': nip44.encrypt(body, shared), 'created_at': int(time.time())},
-        CLIENT.pubkey.hex(), CLIENT.sign)
+    return envelope.seal({'id': method, 'method': method, 'params': params}, CLIENT,
+                         transport.pubkey.hex(), CLIENT.ecdh(transport.pubkey))
 
 
 def answer(transport, sent):
     [message] = sent
-    assert message[0] == 'EVENT' and message[1]['pubkey'] == transport.pubkey.hex()
-    shared = nip44.conversation_key(CLIENT.ecdh(transport.pubkey))
-    return json.loads(nip44.decrypt(message[1]['content'], shared))
+    assert message[0] == 'EVENT' and envelope.verify(message[1]) == transport.pubkey.hex()
+    return envelope.unseal(message[1], CLIENT.ecdh(transport.pubkey))
 
 
 def serve(cfg, events, failing=()):

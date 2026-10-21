@@ -3,10 +3,11 @@ import time
 
 import pytest
 
-from keycard_nostr_bunker import nip01, nip04, nip44, schnorr
+from keycard_nostr_bunker import envelope, nip01, nip04, nip44, schnorr
 from keycard_nostr_bunker.admission import Admission, defer
 from keycard_nostr_bunker.config import SigningConfig
-from keycard_nostr_bunker.nip46 import KIND, Bunker
+from keycard_nostr_bunker.envelope import KIND
+from keycard_nostr_bunker.nip46 import Bunker
 from keycard_nostr_bunker.replay import WINDOW, ReplayWindow
 from keycard_nostr_bunker.signer import SignerUnavailable, SoftwareSigner
 
@@ -20,14 +21,13 @@ ALL = SigningConfig('all', [])
 _counter = 0
 
 
-def encrypt_for_bunker(plaintext, client=CLIENT, legacy=False):
-    shared = client.ecdh(TRANSPORT.pubkey)
-    if legacy:
-        return nip04.encrypt(plaintext, shared)
-    return nip44.encrypt(plaintext, nip44.conversation_key(shared))
+def shared_with_bunker(client=CLIENT):
+    return client.ecdh(TRANSPORT.pubkey)
 
 
-def event_with(content, client=CLIENT, created_at=None):
+def raw_event(plaintext, client=CLIENT, created_at=None):
+    """A request whose body is any text: for messages the envelope would never build."""
+    content = nip44.encrypt(plaintext, nip44.conversation_key(shared_with_bunker(client)))
     return nip01.finalize_event(
         {'kind': KIND, 'tags': [['p', TRANSPORT.pubkey.hex()]], 'content': content,
          'created_at': created_at or int(time.time())},
@@ -37,20 +37,15 @@ def event_with(content, client=CLIENT, created_at=None):
 def request(method, params, legacy=False, client=CLIENT, created_at=None):
     global _counter
     _counter += 1
-    body = json.dumps({'id': f'req-{_counter}', 'method': method, 'params': params},
-                      ensure_ascii=False)
-    return event_with(encrypt_for_bunker(body, client, legacy), client, created_at)
+    return envelope.seal({'id': f'req-{_counter}', 'method': method, 'params': params}, client,
+                         TRANSPORT.pubkey.hex(), shared_with_bunker(client), legacy, created_at)
 
 
 def decrypt_reply(reply, legacy=False, client=CLIENT):
-    assert reply['kind'] == KIND
+    assert envelope.verify(reply) == TRANSPORT.pubkey.hex()
     assert reply['tags'] == [['p', client.pubkey.hex()]]
-    assert reply['pubkey'] == TRANSPORT.pubkey.hex()
-    assert schnorr.verify(TRANSPORT.pubkey, bytes.fromhex(reply['id']), bytes.fromhex(reply['sig']))
-    shared = client.ecdh(TRANSPORT.pubkey)
-    plain = (nip04.decrypt(reply['content'], shared) if legacy
-             else nip44.decrypt(reply['content'], nip44.conversation_key(shared)))
-    return json.loads(plain)
+    assert envelope.is_legacy(reply) is legacy
+    return envelope.unseal(reply, shared_with_bunker(client))
 
 
 def bunker(policy='all', kinds=(), authorized=True, user=USER, replay=None, **admission):
@@ -178,7 +173,7 @@ def test_missing_param():
 
 def test_params_not_a_list_is_treated_as_empty():
     body = json.dumps({'id': 'r', 'method': 'ping', 'params': 'x'})
-    r = decrypt_reply(bunker().handle(event_with(encrypt_for_bunker(body))))
+    r = decrypt_reply(bunker().handle(raw_event(body)))
     assert r['result'] == 'pong'
 
 
@@ -208,7 +203,7 @@ def test_seen_events_survive_a_restart(tmp_path):
 
 
 def test_undecryptable_event_ignored():
-    event = event_with(nip44.encrypt('{}', bytes(32)))
+    event = envelope.seal({}, CLIENT, TRANSPORT.pubkey.hex(), bytes(32))
     assert bunker().handle(event) is None
 
 
@@ -218,29 +213,25 @@ def test_other_kind_ignored():
     assert bunker().handle(event) is None
 
 
-@pytest.mark.parametrize('body', ['[]', '"x"', '1', 'null'])
-def test_non_object_body_ignored(body):
+def test_non_object_body_ignored():
     b = bunker()
-    assert b.handle(event_with(encrypt_for_bunker(body))) is None
+    assert b.handle(raw_event('[]')) is None
     assert call('ping', [], b)['result'] == 'pong'
 
 
 def test_oversized_reply_becomes_an_error():
-    # json.dumps escapes non-ASCII in the reply, so it outgrows the request.
+    # The reply escapes non-ASCII and outgrows a request sent unescaped.
     unsigned = {'kind': 1, 'content': 'é' * 12000, 'created_at': 1700000000}
-    r = call('sign_event', [unsigned])
+    body = json.dumps({'id': 'big', 'method': 'sign_event', 'params': [unsigned]},
+                      ensure_ascii=False)
+    r = decrypt_reply(bunker().handle(raw_event(body)))
     assert r['result'] == '' and 'size limit' in r['error']
 
 
-def test_tampered_or_unsigned_events_are_rejected():
+def test_an_event_that_fails_verification_is_dropped():
     b = bunker()
     good = request('ping', [])
-    for field, value in (('sig', '00' * 64), ('id', 'ff' * 32), ('pubkey', good['pubkey'].upper()),
-                         ('created_at', True), ('tags', 'x')):
-        bad = dict(good, **{field: value})
-        assert b.handle(bad) is None, field
-    forged = dict(good, content=encrypt_for_bunker(json.dumps({'id': 'x', 'method': 'ping'})))
-    assert b.handle(forged) is None
+    assert b.handle(dict(good, sig='00' * 64)) is None
     assert b.handle(good) is not None
 
 
