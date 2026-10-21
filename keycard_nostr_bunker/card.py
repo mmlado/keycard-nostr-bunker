@@ -5,23 +5,24 @@ can do neither and are ignored as if no card were inserted.
 
 The signer runs without a card: it watches the PC/SC readers, opens a session
 when the card is inserted and drops it when the card is removed. Until then
-signing and ECDH raise CardNotPresent.
+signing and ECDH raise CardNotPresent. When pcscd goes away the session is
+dropped too, and the card is opened again once pcscd is back.
 """
 
 import hashlib
 import logging
 import threading
-from typing import Any, Callable, TypeVar
+from typing import Callable, TypeVar
 
 from keycard import KeyCard, constants
 from keycard.constants import DerivationOption, SigningAlgorithm
 from keycard.exceptions import KeyCardError
-from smartcard.CardMonitoring import CardMonitor, CardObserver
 from smartcard.Exceptions import SmartcardException
 from smartcard.pcsc.PCSCExceptions import BaseSCardException
 from smartcard.System import readers as pcsc_readers
 
 from . import schnorr
+from .pcsc import PcscLost, PcscPresence, Presence
 from .state import StateDir, write_private
 from .config import KeycardConfig
 from .signer import SignerUnavailable
@@ -31,6 +32,9 @@ log = logging.getLogger(__name__)
 T = TypeVar('T')
 
 MIN_APPLET_VERSION = (4, 0)
+WAIT_MS = 1000
+RETRY_MIN = 1.0
+RETRY_MAX = 30.0
 PCSC_HINT = 'is pcscd running? (systemctl enable --now pcscd.socket)'
 
 
@@ -62,32 +66,20 @@ class _Session:
         self.shared: dict[bytes, bytes] = {}
 
 
-class _Observer(CardObserver):
-    def __init__(self, signer: 'KeycardSigner'):
-        self._signer = signer
-
-    def update(self, observable: Any, handlers: Any) -> None:
-        added, removed = handlers
-        for card in removed:
-            self._signer.detach(str(card.reader))
-        for card in added:
-            self._signer.attach(str(card.reader))
-
-
 class KeycardSigner:
     def __init__(self, cfg: KeycardConfig, pin: str, state: StateDir,
                  card_factory: Callable[[list[bytes]], KeyCard] = _new_card,
                  readers_fn: Callable[[], list[str]] = list_readers,
-                 monitor_factory: Callable[[], Any] | None = CardMonitor):
+                 presence_factory: Callable[[], Presence] | None = PcscPresence):
         self._cfg = cfg
         self._pin = pin
         self._pubkey_file = state.user_pubkey
         self._rejection_file = state.pin_rejected
         self._card_factory = card_factory
         self._readers_fn = readers_fn
-        self._monitor_factory = monitor_factory
-        self._monitor: Any = None
-        self._observer = _Observer(self)
+        self._presence_factory = presence_factory
+        self._watcher: threading.Thread | None = None
+        self._stopping = threading.Event()
         self._lock = threading.RLock()
         self._session: _Session | None = None
         self._pin_rejected: set[bytes] = set()
@@ -118,17 +110,17 @@ class KeycardSigner:
             log.warning('Keycard: no reader found, waiting for one')
         for reader in readers:
             self.attach(reader)
-        if self._monitor_factory is not None:
-            try:
-                self._monitor = self._monitor_factory()
-                self._monitor.addObserver(self._observer)
-            except (SmartcardException, BaseSCardException) as e:
-                raise CardError(f'PC/SC not available: {e}; {PCSC_HINT}') from e
+        if self._presence_factory is not None:
+            self._stopping.clear()
+            self._watcher = threading.Thread(target=self._watch, args=(self._presence_factory(),),
+                                             name='keycard-watch', daemon=True)
+            self._watcher.start()
 
     def stop(self) -> None:
-        if self._monitor is not None:
-            self._monitor.deleteObserver(self._observer)
-            self._monitor = None
+        if self._watcher is not None:
+            self._stopping.set()
+            self._watcher.join(timeout=WAIT_MS / 1000 + 1)
+            self._watcher = None
         with self._lock:
             self._drop()
 
@@ -161,6 +153,42 @@ class KeycardSigner:
             if self._session is not None and self._session.reader == reader:
                 log.warning('Keycard: card removed from %s', reader)
                 self._drop()
+
+    def _watch(self, presence: Presence) -> None:
+        present: set[str] = set()
+        lost = False
+        delay = RETRY_MIN
+        try:
+            while not self._stopping.is_set():
+                try:
+                    now = presence.wait(WAIT_MS)
+                except PcscLost as e:
+                    if not lost:
+                        lost = True
+                        present = set()
+                        log.warning('Keycard: lost pcscd (%s); waiting for it to come back', e)
+                        self._pcscd_lost()
+                    self._stopping.wait(delay)
+                    delay = min(delay * 2, RETRY_MAX)
+                    continue
+                if lost:
+                    lost = False
+                    delay = RETRY_MIN
+                    log.info('Keycard: pcscd is back')
+                for reader in present - now:
+                    self.detach(reader)
+                for reader in now - present:
+                    self.attach(reader)
+                present = now
+        finally:
+            presence.close()
+
+    def _pcscd_lost(self) -> None:
+        """Its card handles died with it; the cards are opened again when it is back."""
+        with self._lock:
+            self._drop()
+            self._failed.clear()
+            self.refused = None
 
     def sign(self, digest: bytes) -> bytes:
         with self._lock:

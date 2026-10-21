@@ -1,5 +1,8 @@
 """KeycardSigner against a fake card."""
 
+import logging
+import queue
+import threading
 from types import SimpleNamespace
 
 import pytest
@@ -11,6 +14,7 @@ from keycard_nostr_bunker import card as card_module
 from keycard_nostr_bunker import schnorr
 from keycard_nostr_bunker.card import CardError, CardNotPresent, KeycardSigner, list_readers
 from keycard_nostr_bunker.config import KeycardConfig
+from keycard_nostr_bunker.pcsc import PcscLost
 from keycard_nostr_bunker.state import StateDir
 
 SECKEY = (7).to_bytes(32, 'big')
@@ -90,25 +94,49 @@ class FakeCard:
         return schnorr.ecdh_x(self.seckey, public_key[1:33])
 
 
-class FakeMonitor:
-    instances = []
+class FakePresence:
+    """What pcscd reports, one fed event per wait; feed returns once the watcher handled it."""
 
     def __init__(self):
-        self.observers = []
-        FakeMonitor.instances.append(self)
+        self.events = queue.Queue()
+        self.current = set()
+        self.handled = None
+        self.closed = False
 
-    def addObserver(self, observer):
-        self.observers.append(observer)
+    def wait(self, timeout_ms):
+        if self.handled is not None:
+            self.handled.set()
+            self.handled = None
+        try:
+            event, self.handled = self.events.get(timeout=timeout_ms / 1000)
+        except queue.Empty:
+            return set(self.current)
+        if isinstance(event, Exception):
+            raise event
+        self.current = set(event)
+        return set(event)
 
-    def deleteObserver(self, observer):
-        self.observers.remove(observer)
+    def close(self):
+        self.closed = True
+
+    def feed(self, event):
+        handled = threading.Event()
+        self.events.put((event, handled))
+        assert handled.wait(5), 'the watcher did not handle the event'
 
 
 @pytest.fixture
-def rig(tmp_path):
+def rig(tmp_path, monkeypatch):
     """A signer factory; `cards` records every card the factory handed out."""
-    cards = []
+    monkeypatch.setattr(card_module, 'WAIT_MS', 20)
+    monkeypatch.setattr(card_module, 'RETRY_MIN', 0.01)
+    monkeypatch.setattr(card_module, 'RETRY_MAX', 0.02)
+    cards, presences, signers = [], [], []
     state = {'readers': [READER], 'card_kwargs': {}}
+
+    def presence():
+        presences.append(FakePresence())
+        return presences[-1]
 
     def make(version=(4, 0), pin='123456', start=True, **cfg_kwargs):
         cfg = KeycardConfig(pin=pin, **cfg_kwargs)
@@ -118,12 +146,15 @@ def rig(tmp_path):
             return cards[-1]
 
         signer = KeycardSigner(cfg, cfg.pin, StateDir(tmp_path), factory,
-                               lambda: list(state['readers']), FakeMonitor)
+                               lambda: list(state['readers']), presence)
+        signers.append(signer)
         if start:
             signer.start()
         return signer
 
-    return SimpleNamespace(make=make, cards=cards, state=state, path=tmp_path)
+    yield SimpleNamespace(make=make, cards=cards, presences=presences, state=state, path=tmp_path)
+    for signer in signers:
+        signer.stop()
 
 
 def verify_calls(card):
@@ -157,11 +188,50 @@ def test_ecdh_cached_per_session(rig):
     assert len([c for c in rig.cards[1].calls if c[0] == 'ecdh']) == 1
 
 
-def test_start_watches_readers(rig):
+def test_watcher_follows_the_card(rig):
     signer = rig.make()
-    assert FakeMonitor.instances[-1].observers == [signer._observer]
+    pcscd = rig.presences[-1]
+    pcscd.feed({READER})
+    assert signer.present and len(rig.cards) == 1
+    pcscd.feed(set())
+    assert not signer.present
+    pcscd.feed({READER})
+    assert signer.present and len(rig.cards) == 2
+
+
+def test_lost_pcscd_closes_the_session_until_it_is_back(rig, caplog):
+    caplog.set_level(logging.INFO, logger='keycard_nostr_bunker.card')
+    signer = rig.make()
+    pcscd = rig.presences[-1]
+    pcscd.feed({READER})
+    pcscd.feed(PcscLost('RPC transport error.'))
+    assert not signer.present and rig.cards[0].transport.connected is None
+    with pytest.raises(CardNotPresent, match='not present'):
+        signer.sign(bytes(32))
+    pcscd.feed(PcscLost('Service not available.'))
+    pcscd.feed({READER})
+    assert signer.present and len(rig.cards) == 2 and len(verify_calls(rig.cards[1])) == 1
+    assert caplog.text.count('lost pcscd (RPC transport error.)') == 1
+    assert 'Service not available' not in caplog.text
+    assert caplog.text.count('pcscd is back') == 1
+
+
+def test_refused_card_is_tried_again_after_pcscd_is_back(rig):
+    signer = rig.make((3, 1))
+    pcscd = rig.presences[-1]
+    pcscd.feed({READER})
+    assert len(rig.cards) == 1
+    pcscd.feed(PcscLost('RPC transport error.'))
+    assert signer.refused is None
+    pcscd.feed({READER})
+    assert len(rig.cards) == 2 and 'Schnorr' in signer.refused
+
+
+def test_stop_ends_the_watcher(rig):
+    signer = rig.make()
+    watcher = signer._watcher
     signer.stop()
-    assert FakeMonitor.instances[-1].observers == []
+    assert not watcher.is_alive() and rig.presences[-1].closed
     assert not signer.present
 
 
