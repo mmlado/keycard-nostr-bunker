@@ -275,8 +275,6 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer) -> None:
                           'accepted' if accepted else 'rejected', rest[0] if rest else '')
             case ['NOTICE', text]:
                 log.info('Relay notice from %s: %s', relay.url, text)
-            case ['CLOSED', _, text]:
-                log.warning('Subscription closed by %s: %s', relay.url, text)
             case ['EOSE', _]:
                 log.debug('EOSE from %s', relay.url)
             case _:

@@ -219,7 +219,7 @@ Every method but `connect` requires an admitted client. Every request must be si
 
 ## Relays
 
-The relay is only a mailbox for signer traffic. It must accept kind 24133 events without NIP-42 AUTH and be reachable from the bunker and from every client; it does not have to be a relay you post to. `wss://relay.nsec.app` exists for NIP-46 traffic; `wss://relay.damus.io` and `wss://nos.lol` work too. Use two. Both the bunker and the clients only make outbound connections, so NAT and firewalls need no configuration.
+The relay is only a mailbox for signer traffic. It must accept kind 24133 events without NIP-42 AUTH and be reachable from the bunker and from every client; it does not have to be a relay you post to. `wss://relay.nsec.app` exists for NIP-46 traffic; `wss://relay.damus.io` and `wss://nos.lol` work too. Use two. If a relay closes the subscription, the bunker subscribes again after a delay that grows each time; a relay that demands NIP-42 AUTH cannot be used, since the bunker does not authenticate. Both the bunker and the clients only make outbound connections, so NAT and firewalls need no configuration.
 
 ## Tests
 
