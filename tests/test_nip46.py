@@ -297,7 +297,7 @@ def test_on_secret_accepted_runs_once():
 def test_on_secret_accepted_fires_before_approval():
     used = []
     b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True,
-               approver=lambda client: False, on_secret_accepted=used.append)
+               approver=lambda client, perms: False, on_secret_accepted=used.append)
     assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['error'] == 'connection refused'
     assert used == [CLIENT.pubkey.hex()]
 
@@ -322,7 +322,7 @@ def test_rotated_secret_is_read_from_the_file(tmp_path):
 def test_approver_decides():
     asked = []
 
-    def approver(client):
+    def approver(client, perms):
         asked.append(client)
         return len(asked) > 1
 
@@ -336,7 +336,7 @@ def test_approver_decides():
 
 def test_approver_not_asked_without_secret():
     b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True,
-               approver=lambda client: pytest.fail('asked'))
+               approver=lambda client, perms: pytest.fail('asked'))
     assert call('connect', [TRANSPORT.pubkey.hex(), 'wrong'], b)['error'] == 'invalid secret'
 
 
@@ -356,7 +356,7 @@ def test_pending_until_approved_elsewhere():
 
 def test_busy_prompt_parks_the_client():
     b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True,
-               approver=lambda client: pytest.fail('asked while busy'))
+               approver=lambda client, perms: pytest.fail('asked while busy'))
     with b._prompt:
         assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['error'] == 'pending approval'
     assert CLIENT.pubkey.hex() in b.pending
@@ -373,3 +373,83 @@ def test_preauthorized_client_needs_no_secret():
 def test_preauthorized_list_admits_only_its_keys():
     b = Bunker(TRANSPORT, USER, ALL, SECRET, preauthorized=[THIRD_PARTY.pubkey.hex()])
     assert call('ping', [], b)['error'] == 'unauthorized'
+
+
+def connect_with(b, perms, client=CLIENT):
+    params = [TRANSPORT.pubkey.hex(), SECRET, perms]
+    return decrypt_reply(b.handle(request('connect', params, client=client), 'wss://test'),
+                         client=client)
+
+
+def sign(b, kind):
+    return call('sign_event', [{'kind': kind, 'content': '', 'created_at': 1700000000}], b)
+
+
+def test_requested_permissions_are_enforced():
+    b = bunker(authorized=False)
+    assert connect_with(b, 'sign_event:1,nip44_encrypt')['result'] == 'ack'
+    assert 'perms=nip44_encrypt,sign_event:1' in b.clients.get(CLIENT.pubkey.hex())
+    assert sign(b, 1)['error'] is None
+    assert sign(b, 3)['error'] == ('sign_event for kind 3 is not among the permissions '
+                                   'this client requested')
+    peer = THIRD_PARTY.pubkey.hex()
+    assert call('nip44_encrypt', [peer, 'x'], b)['error'] is None
+    assert call('nip44_decrypt', [peer, 'x'], b)['error'] == (
+        'nip44_decrypt is not among the permissions this client requested')
+    assert 'not among the permissions' in call('nip04_encrypt', [peer, 'x'], b)['error']
+    assert call('ping', [], b)['result'] == 'pong'
+    assert call('get_public_key', [], b)['result'] == USER.pubkey.hex()
+
+
+def test_sign_event_without_kind_allows_every_kind_the_policy_allows():
+    b = bunker('allowed_kinds', [1, 7], authorized=False)
+    connect_with(b, 'sign_event')
+    assert sign(b, 7)['error'] is None
+    assert sign(b, 3)['error'] == 'kind 3 is not in signing.allowed_kinds'
+
+
+def test_no_requested_permissions_means_unrestricted():
+    b = bunker(authorized=False)
+    assert connect_with(b, '')['result'] == 'ack'
+    assert 'perms=' not in b.clients.get(CLIENT.pubkey.hex())
+    assert sign(b, 3)['error'] is None
+
+
+def test_garbage_permissions_still_restrict():
+    b = bunker(authorized=False)
+    connect_with(b, '!!, sign event')
+    assert 'not among the permissions' in sign(b, 1)['error']
+    assert call('ping', [], b)['result'] == 'pong'
+
+
+def test_reconnect_cannot_widen_permissions():
+    b = bunker(authorized=False)
+    connect_with(b, 'sign_event:1')
+    assert connect_with(b, 'sign_event')['result'] == 'ack'
+    assert 'not among the permissions' in sign(b, 3)['error']
+
+
+def test_permissions_survive_a_restart(tmp_path):
+    path = tmp_path / 'clients'
+    first = Bunker(TRANSPORT, USER, ALL, SECRET, ClientList(path))
+    connect_with(first, 'sign_event:1')
+    second = Bunker(TRANSPORT, USER, ALL, SECRET, ClientList(path))
+    assert sign(second, 1)['error'] is None
+    assert 'not among the permissions' in sign(second, 3)['error']
+
+
+def test_approver_sees_the_requested_permissions():
+    seen = []
+    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True,
+               approver=lambda client, perms: seen.append(perms) or True)
+    connect_with(b, 'sign_event:1,nip44_encrypt')
+    assert seen == ['nip44_encrypt, sign_event:1']
+
+
+def test_pending_permissions_carry_over_to_approval():
+    from keycard_nostr_bunker.clients import approve
+    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True)
+    assert connect_with(b, 'sign_event:1')['error'] == 'pending approval'
+    approve(CLIENT.pubkey.hex(), b.clients, b.pending)
+    assert sign(b, 1)['error'] is None
+    assert 'not among the permissions' in sign(b, 3)['error']

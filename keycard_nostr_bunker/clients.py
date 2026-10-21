@@ -7,6 +7,8 @@ from collections import OrderedDict
 from pathlib import Path
 from typing import Callable
 
+from .perms import Permissions
+
 DIR_MODE = 0o700
 FILE_MODE = 0o600
 
@@ -46,6 +48,10 @@ class ClientList:
     def __iter__(self):
         self._refresh()
         return iter(list(self._entries))
+
+    def get(self, pubkey: str) -> str | None:
+        self._refresh()
+        return self._entries.get(pubkey)
 
     def items(self) -> list[tuple[str, str]]:
         self._refresh()
@@ -96,8 +102,9 @@ class ClientList:
 
 def approve(pubkey: str, clients: ClientList, pending: ClientList) -> bool:
     """Admit a client; returns whether it was waiting for approval."""
+    perms = Permissions.from_meta(pending.get(pubkey) or '').meta_token()
     was_pending = pending.remove(pubkey)
-    clients.add(pubkey, f'{int(time.time())} approved')
+    clients.add(pubkey, ' '.join(filter(None, [str(int(time.time())), 'approved', perms])))
     return was_pending
 
 

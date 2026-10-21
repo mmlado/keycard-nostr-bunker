@@ -3,7 +3,8 @@ Minimal NIP-46 client for trying a bunker by hand. Each run is a new client
 unless --key is given.
 
 Usage:
-    python tools/nip46_client.py "bunker://..." [--call ping] [--nip04] [--key HEX]
+    python tools/nip46_client.py "bunker://..." [--call ping] [--sign KIND] [--perms LIST]
+                                 [--nip04] [--key HEX]
 """
 import argparse
 import asyncio
@@ -30,7 +31,8 @@ def parse_url(url: str) -> tuple[str, list[str], str]:
     return parsed.netloc, query.get('relay', []), query.get('secret', [''])[0]
 
 
-async def run(url: str, calls: list[str], legacy: bool, key: str | None) -> int:
+async def run(url: str, calls: list[tuple[str, list]], legacy: bool, key: str | None,
+              perms: str) -> int:
     bunker, relays, secret = parse_url(url)
     client = SoftwareSigner(bytes.fromhex(key)) if key else SoftwareSigner.generate()
     shared = client.ecdh(bytes.fromhex(bunker))
@@ -46,11 +48,12 @@ async def run(url: str, calls: list[str], legacy: bool, key: str | None) -> int:
             return nip04.decrypt(text, shared)
         return nip44.decrypt(text, nip44.conversation_key(shared))
 
+    failures = 0
     async with connect(relays[0]) as ws:
         await ws.send(json.dumps(['REQ', 'client', {'kinds': [KIND], '#p': [client.pubkey.hex()],
                                                     'since': int(time.time()) - 10}]))
-        for i, (method, params) in enumerate([('connect', [bunker, secret])]
-                                             + [(c, []) for c in calls]):
+        for i, (method, params) in enumerate([('connect', [bunker, secret, perms])]
+                                             + calls):
             request = {'id': f'r{i}', 'method': method, 'params': params}
             event = nip01.finalize_event(
                 {'kind': KIND, 'tags': [['p', bunker]], 'content': encrypt(json.dumps(request))},
@@ -58,10 +61,13 @@ async def run(url: str, calls: list[str], legacy: bool, key: str | None) -> int:
             await ws.send(json.dumps(['EVENT', event]))
             print(f'-> {method}')
             reply = await wait_reply(ws, bunker, f'r{i}', decrypt)
-            print(f'<- {method}: result={reply.get("result")!r} error={reply.get("error")!r}')
+            result = str(reply.get('result'))
+            print(f'<- {method}: result={result[:80]!r} error={reply.get("error")!r}')
             if reply.get('error'):
-                return 1
-    return 0
+                failures += 1
+                if method == 'connect':
+                    return 1
+    return 1 if failures else 0
 
 
 async def wait_reply(ws, bunker: str, request_id: str, decrypt) -> dict:
@@ -82,11 +88,18 @@ def main() -> int:
     parser.add_argument('url', help='bunker:// URL, e.g. from "keycard-nostr-bunker url"')
     parser.add_argument('--call', action='append', default=[],
                         help='method to call after connect, repeatable: ping, get_public_key')
+    parser.add_argument('--sign', action='append', default=[], type=int, metavar='KIND',
+                        help='ask the bunker to sign a test event of this kind, repeatable')
+    parser.add_argument('--perms', default='',
+                        help='permissions to request at connect, e.g. sign_event:1,nip44_encrypt')
     parser.add_argument('--nip04', action='store_true', help='use NIP-04 for the transport')
     parser.add_argument('--key', help='client secret key in hex, to reconnect as the same client')
     args = parser.parse_args()
     try:
-        return asyncio.run(run(args.url, args.call, args.nip04, args.key))
+        calls = [(method, []) for method in args.call] + [
+            ('sign_event', [{'kind': kind, 'content': 'keycard-nostr-bunker test', 'tags': [],
+                             'created_at': int(time.time())}]) for kind in args.sign]
+        return asyncio.run(run(args.url, calls, args.nip04, args.key, args.perms))
     except (TimeoutError, ValueError, OSError) as e:
         print(f'error: {e}', file=sys.stderr)
         return 1

@@ -168,7 +168,9 @@ To admit a client whose pubkey you already know, without any URL, list it in `co
 
 For a desktop, `approve_clients` with the prompt is the comfortable choice. For a headless service, `rotate_secret` keeps a leaked URL harmless and `clients approve` over SSH works when you need it.
 
-What an admitted client can do is bounded by `signing`: with `policy = "allowed_kinds"` the bunker signs only those kinds, and a rejected request says so in the log and to the client (`kind 7 is not in signing.allowed_kinds`). Encryption and decryption requests are not filtered.
+A client can also say what it needs. NIP-46 lets `connect` carry a permission list such as `sign_event:1,nip44_encrypt`, and the bunker holds the client to it: it is stored with the client, shown in the approval prompt and in `clients pending`, and anything outside it is refused, for example `sign_event for kind 3 is not among the permissions this client requested`. `ping` and `get_public_key` are always allowed. A client that sends no list is unrestricted, as before. The list is fixed at admission; reconnecting cannot widen it, so revoke the client to start over. Clients from `authorized_clients` are unrestricted.
+
+What an admitted client can do is also bounded by `signing`: with `policy = "allowed_kinds"` the bunker signs only those kinds, and a rejected request says so in the log and to the client (`kind 7 is not in signing.allowed_kinds`). Encryption and decryption requests are not filtered.
 
 ### Running without the card
 

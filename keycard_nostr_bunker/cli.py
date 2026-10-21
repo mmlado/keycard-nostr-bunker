@@ -62,15 +62,15 @@ def show_url(url: str, reason: str) -> None:
         log.info('%s; run "keycard-nostr-bunker url" to show the bunker URL', reason)
 
 
-def terminal_approver(client: str) -> bool:
+def terminal_approver(client: str, perms: str) -> bool:
     code = client[:4]
     fd = sys.stdin.fileno()
     try:
         termios.tcflush(fd, termios.TCIFLUSH)
     except (termios.error, OSError):
         pass
-    print(f'\nClient {client} asks to connect.\nType {code} to approve, anything else to refuse: ',
-          end='', flush=True)
+    print(f'\nClient {client} asks to connect.\nIt requests: {perms}\n'
+          f'Type {code} to approve, anything else to refuse: ', end='', flush=True)
     ready, _, _ = select.select([sys.stdin], [], [], APPROVAL_TIMEOUT)
     if not ready:
         print('\nNo answer, refused', flush=True)

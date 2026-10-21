@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - `connection.authorized_clients` admits known client pubkeys without the secret
+- The permissions a client requests in `connect` are stored with it and enforced, on top of the signing policy
 - `tools/nip46_client.py`, a minimal NIP-46 client for trying a bunker by hand
 
 ### Changed
