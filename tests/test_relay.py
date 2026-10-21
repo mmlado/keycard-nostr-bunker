@@ -4,7 +4,7 @@ import json
 from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
-from keycard_bunker.relay import RelayConn
+from keycard_nostr_bunker.relay import RelayConn
 
 
 class FakeWs:

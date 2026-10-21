@@ -7,7 +7,7 @@ import sys
 from pathlib import Path
 from typing import Any, Callable
 
-UNIT_NAME = 'keycard-bunker.service'
+UNIT_NAME = 'keycard-nostr-bunker.service'
 PIN_FILE = 'pin'
 
 Runner = Callable[..., Any]
@@ -23,17 +23,17 @@ def unit_path() -> Path:
 
 
 def executable() -> Path:
-    """The keycard-bunker command this process was started as."""
+    """The keycard-nostr-bunker command this process was started as."""
     candidate = Path(sys.argv[0])
-    if candidate.name == 'keycard-bunker' and candidate.exists():
+    if candidate.name == 'keycard-nostr-bunker' and candidate.exists():
         return candidate.resolve()
-    sibling = Path(sys.executable).with_name('keycard-bunker')
+    sibling = Path(sys.executable).with_name('keycard-nostr-bunker')
     if sibling.exists():
         return sibling.resolve()
-    found = shutil.which('keycard-bunker')
+    found = shutil.which('keycard-nostr-bunker')
     if found:
         return Path(found).resolve()
-    raise FileNotFoundError('keycard-bunker command not found on PATH')
+    raise FileNotFoundError('keycard-nostr-bunker command not found on PATH')
 
 
 def pin_file(config: Path) -> Path:
@@ -52,7 +52,7 @@ def unit_text(exe: Path, config: Path, credential: Path | None) -> str:
         load = f'LoadCredential={PIN_FILE}:{str(credential).replace("%", "%%")}\n'
     return (
         '[Unit]\n'
-        'Description=keycard-bunker NIP-46 remote signer\n'
+        'Description=keycard-nostr-bunker NIP-46 remote signer\n'
         'After=network-online.target\n'
         'Wants=network-online.target\n'
         '\n'

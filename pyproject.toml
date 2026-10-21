@@ -3,7 +3,7 @@ requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "keycard-bunker"
+name = "keycard-nostr-bunker"
 dynamic = ["version"]
 description = "NIP-46 Nostr remote signer (bunker) backed by a Keycard"
 readme = "README.md"
@@ -20,16 +20,16 @@ dependencies = [
 dev = ["pytest", "flake8", "mypy"]
 
 [project.urls]
-Homepage = "https://github.com/mmlado/keycard-bunker"
+Homepage = "https://github.com/mmlado/keycard-nostr-bunker"
 
 [project.scripts]
-keycard-bunker = "keycard_bunker.cli:main"
+keycard-nostr-bunker = "keycard_nostr_bunker.cli:main"
 
 [tool.setuptools.packages.find]
-include = ["keycard_bunker*"]
+include = ["keycard_nostr_bunker*"]
 
 [tool.setuptools.dynamic]
-version = {attr = "keycard_bunker.__version__"}
+version = {attr = "keycard_nostr_bunker.__version__"}
 
 [tool.mypy]
 python_version = "3.11"

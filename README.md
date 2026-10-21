@@ -1,13 +1,13 @@
-# keycard-bunker
+# keycard-nostr-bunker
 
-[![Build status](https://github.com/mmlado/keycard-bunker/actions/workflows/test.yml/badge.svg)](https://github.com/mmlado/keycard-bunker/actions/workflows/test.yml) [![PyPI version](https://img.shields.io/pypi/v/keycard-bunker.svg)](https://pypi.org/project/keycard-bunker/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![Build status](https://github.com/mmlado/keycard-nostr-bunker/actions/workflows/test.yml/badge.svg)](https://github.com/mmlado/keycard-nostr-bunker/actions/workflows/test.yml) [![PyPI version](https://img.shields.io/pypi/v/keycard-nostr-bunker.svg)](https://pypi.org/project/keycard-nostr-bunker/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
 A NIP-46 remote signer (bunker) that keeps your Nostr key on a [Keycard](https://keycard.tech).
 
 With a Keycard running applet 4.x, every signature and every ECDH shared secret is computed on the card. The private key never leaves the secure element. Any NIP-46 client (Coracle, noStrudel, Snort, Amethyst) connects to the bunker with a `bunker://` URL.
 
 ```
-Nostr client ──NIP-46──▶ relay ──NIP-46──▶ keycard-bunker ──PC/SC──▶ Keycard
+Nostr client ──NIP-46──▶ relay ──NIP-46──▶ keycard-nostr-bunker ──PC/SC──▶ Keycard
 ```
 
 1. The bunker subscribes to the configured relays for kind:24133 events addressed to its bunker key.
@@ -29,19 +29,19 @@ Nostr client ──NIP-46──▶ relay ──NIP-46──▶ keycard-bunker �
 - To build `pyscard`, which has no Linux wheels on PyPI: a C compiler, `swig`, Python headers and pcsc-lite headers. Fedora: `sudo dnf install gcc swig python3-devel pcsc-lite-devel`. Debian and Ubuntu: `sudo apt install build-essential swig python3-dev libpcsclite-dev`.
 
 > **Advertisement:** the development card link above is an affiliate link. The developer earns a
-> commission on purchases made through it. Nothing in keycard-bunker depends on buying through it.
+> commission on purchases made through it. Nothing in keycard-nostr-bunker depends on buying through it.
 
 ## Installation
 
 ```sh
-pipx install keycard-bunker
+pipx install keycard-nostr-bunker
 ```
 
 Or from source:
 
 ```sh
-git clone https://github.com/mmlado/keycard-bunker
-cd keycard-bunker
+git clone https://github.com/mmlado/keycard-nostr-bunker
+cd keycard-nostr-bunker
 python -m venv .venv && source .venv/bin/activate
 pip install .
 ```
@@ -80,7 +80,7 @@ card.generate_key()                          # a fresh key that lives only on th
 
 ## Configuration
 
-Copy `config.example.toml` to `~/.config/keycard-bunker/config.toml` and edit. The loader is strict: an unknown key or a value of the wrong type is an error, and a config that holds a PIN or secret must be mode 0600.
+Copy `config.example.toml` to `~/.config/keycard-nostr-bunker/config.toml` and edit. The loader is strict: an unknown key or a value of the wrong type is an error, and a config that holds a PIN or secret must be mode 0600.
 
 | Section | Key | Meaning |
 |---|---|---|
@@ -115,14 +115,14 @@ Everything the bunker remembers sits next to `signer.key`, mode 0600 in a 0700 d
 ## Running
 
 ```sh
-keycard-bunker
+keycard-nostr-bunker
 ```
 
-That reads `config.toml` from the current directory, or `~/.config/keycard-bunker/config.toml` if there is none. `-c FILE` picks another; it goes before or after the subcommand.
+That reads `config.toml` from the current directory, or `~/.config/keycard-nostr-bunker/config.toml` if there is none. `-c FILE` picks another; it goes before or after the subcommand.
 
 ```
-11:02:04 [INFO] Config: /home/me/.config/keycard-bunker/config.toml
-11:02:04 [INFO] State: /home/me/.config/keycard-bunker
+11:02:04 [INFO] Config: /home/me/.config/keycard-nostr-bunker/config.toml
+11:02:04 [INFO] State: /home/me/.config/keycard-nostr-bunker
 11:02:04 [INFO] Bunker pubkey: 4f6915de49dbfe3457bcedaf217a25ac188222f96e1a17aa518eb57e5ccf0c89
 11:02:04 [INFO] Keycard: applet 4.0 in Generic USB2.0-CRW [Smart Card Reader Interface] 00 00
 11:02:05 [INFO] Keycard: PIN verified
@@ -138,17 +138,17 @@ bunker://4f6915de49dbfe3457bcedaf217a25ac188222f96e1a17aa518eb57e5ccf0c89?relay=
 11:02:11 [INFO] NIP-46 sign_event -> ok
 ```
 
-Paste the `bunker://` URL into the client's remote signer field. The URL carries the secret, so it is printed only when the bunker runs in a terminal; a service logs a hint instead, and `keycard-bunker url` prints it on demand.
+Paste the `bunker://` URL into the client's remote signer field. The URL carries the secret, so it is printed only when the bunker runs in a terminal; a service logs a hint instead, and `keycard-nostr-bunker url` prints it on demand.
 
 | Command | |
 |---|---|
-| `keycard-bunker` or `keycard-bunker run` | start the bunker |
-| `keycard-bunker run --no-card` | sign with the bunker key instead of a card, to test the relay side |
-| `keycard-bunker url` | print the bunker URL, secret included, without starting anything |
-| `keycard-bunker readers` | list PC/SC readers, for the `reader` setting |
-| `keycard-bunker service install` / `uninstall` | systemd user service, see below |
-| `keycard-bunker clients list` / `pending` | admitted clients, clients waiting for approval |
-| `keycard-bunker clients approve <pubkey>` / `revoke <pubkey>` | admit or remove a client |
+| `keycard-nostr-bunker` or `keycard-nostr-bunker run` | start the bunker |
+| `keycard-nostr-bunker run --no-card` | sign with the bunker key instead of a card, to test the relay side |
+| `keycard-nostr-bunker url` | print the bunker URL, secret included, without starting anything |
+| `keycard-nostr-bunker readers` | list PC/SC readers, for the `reader` setting |
+| `keycard-nostr-bunker service install` / `uninstall` | systemd user service, see below |
+| `keycard-nostr-bunker clients list` / `pending` | admitted clients, clients waiting for approval |
+| `keycard-nostr-bunker clients approve <pubkey>` / `revoke <pubkey>` | admit or remove a client |
 
 `-v` turns on debug logging.
 
@@ -156,12 +156,12 @@ Paste the `bunker://` URL into the client's remote signer field. The URL carries
 
 Clients are admitted by the secret in the `bunker://` URL: the first `connect` with it enrolls the client's pubkey in `clients`, and every other request from a pubkey not in that file is refused with `unauthorized`. The URL is therefore a bearer credential: whoever has it can enroll one client. Treat it like a password and paste it only into apps you trust.
 
-`keycard-bunker clients revoke <pubkey>` removes a client and rotates the secret at the same time, since the revoked client still knows the old one; the running bunker picks both changes up at once. If the secret is fixed in the config, change it there. The same command is the answer to a leaked URL: revoke anything you do not recognise, and the old URL admits nobody.
+`keycard-nostr-bunker clients revoke <pubkey>` removes a client and rotates the secret at the same time, since the revoked client still knows the old one; the running bunker picks both changes up at once. If the secret is fixed in the config, change it there. The same command is the answer to a leaked URL: revoke anything you do not recognise, and the old URL admits nobody.
 
 Two options tighten admission:
 
 - `rotate_secret = true` replaces the secret as soon as a client presents it, whether or not you then approve that client, and prints the new URL. A URL you already used admits nobody else.
-- `approve_clients = true` makes the bunker ask you before admitting. In a terminal it prompts, with a minute to answer, and the answer is the first four characters of the pubkey shown, so a stray keystroke cannot approve anyone. As a service it parks the client in `pending`, logs the pubkey, and the client gets `pending approval` until you run `keycard-bunker clients approve <pubkey>` and it connects again. `clients pending` lists who is waiting, with the time and the relay. Approve only a client you have just set up yourself, right after pasting the URL, and refuse anything you did not expect. A hacker with the URL then still needs your approval, on your machine.
+- `approve_clients = true` makes the bunker ask you before admitting. In a terminal it prompts, with a minute to answer, and the answer is the first four characters of the pubkey shown, so a stray keystroke cannot approve anyone. As a service it parks the client in `pending`, logs the pubkey, and the client gets `pending approval` until you run `keycard-nostr-bunker clients approve <pubkey>` and it connects again. `clients pending` lists who is waiting, with the time and the relay. Approve only a client you have just set up yourself, right after pasting the URL, and refuse anything you did not expect. A hacker with the URL then still needs your approval, on your machine.
 
 For a desktop, `approve_clients` with the prompt is the comfortable choice. For a headless service, `rotate_secret` keeps a leaked URL harmless and `clients approve` over SSH works when you need it.
 
@@ -173,27 +173,27 @@ The bunker starts whether or not the card is inserted and watches the readers. W
 
 If another program uses the card while the bunker runs, the session is reopened on the next request. The PIN is sent at most once per card and per PIN: a wrong PIN is remembered in `pin.rejected` across restarts, and when the card reports a single attempt left the bunker does not spend it. A refused card shows up in the log with the reason, and clients get `Keycard refused: ...`.
 
-The PIN comes from the first of: `keycard.pin` in the config, the `KEYCARD_BUNKER_PIN` environment variable, a systemd credential named `pin`, a prompt when running in a terminal.
+The PIN comes from the first of: `keycard.pin` in the config, the `KEYCARD_NOSTR_BUNKER_PIN` environment variable, a systemd credential named `pin`, a prompt when running in a terminal.
 
 ### As a service
 
 ```sh
-keycard-bunker service install -c ~/.config/keycard-bunker/config.toml
+keycard-nostr-bunker service install -c ~/.config/keycard-nostr-bunker/config.toml
 ```
 
-This writes a systemd user unit for that config, pointing at the `keycard-bunker` command you ran, then enables and starts it. A service cannot prompt for the PIN, so the install refuses unless `keycard.pin` is set or a file named `pin` sits next to the config; that file is passed to the service as a systemd credential and the PIN stays out of the config. Create it with:
+This writes a systemd user unit for that config, pointing at the `keycard-nostr-bunker` command you ran, then enables and starts it. A service cannot prompt for the PIN, so the install refuses unless `keycard.pin` is set or a file named `pin` sits next to the config; that file is passed to the service as a systemd credential and the PIN stays out of the config. Create it with:
 
 ```sh
-(umask 077 && echo 123456 > ~/.config/keycard-bunker/pin)
+(umask 077 && echo 123456 > ~/.config/keycard-nostr-bunker/pin)
 ```
 
 Useful afterwards:
 
 ```sh
-keycard-bunker url                         # the bunker URL; it is not in the journal
-journalctl --user -u keycard-bunker -f     # logs
+keycard-nostr-bunker url                         # the bunker URL; it is not in the journal
+journalctl --user -u keycard-nostr-bunker -f     # logs
 loginctl enable-linger                     # keep running while logged out
-keycard-bunker service uninstall
+keycard-nostr-bunker service uninstall
 ```
 
 `pcscd` must be running. The bunker stops cleanly on SIGTERM.

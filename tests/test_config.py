@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from keycard_bunker.config import DEFAULT_KEY_PATH, load_config, validate_key_path
+from keycard_nostr_bunker.config import DEFAULT_KEY_PATH, load_config, validate_key_path
 
 
 def write(tmp_path, text, mode=0o600):
@@ -18,7 +18,8 @@ def test_defaults_when_missing(tmp_path):
     assert cfg.keycard.key_path == DEFAULT_KEY_PATH
     assert cfg.keycard.trust_test_ca is False
     assert cfg.signing.policy == 'allowed_kinds' and cfg.signing.allowed_kinds == [1]
-    assert cfg.signer.key_file == str(Path('~/.config/keycard-bunker/signer.key').expanduser())
+    default_key = Path('~/.config/keycard-nostr-bunker/signer.key').expanduser()
+    assert cfg.signer.key_file == str(default_key)
 
 
 def test_parse(tmp_path):

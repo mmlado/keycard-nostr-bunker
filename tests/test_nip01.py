@@ -1,4 +1,4 @@
-from keycard_bunker import nip01, schnorr
+from keycard_nostr_bunker import nip01, schnorr
 
 PUBKEY = '79be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798'
 SECKEY = (1).to_bytes(32, 'big')

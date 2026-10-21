@@ -3,8 +3,8 @@ import stat
 
 import pytest
 
-from keycard_bunker.clients import (ClientList, Secret, SeenEvents, approve,
-                                    load_or_generate_secret, new_secret, write_private)
+from keycard_nostr_bunker.clients import (ClientList, Secret, SeenEvents, approve,
+                                          load_or_generate_secret, new_secret, write_private)
 
 
 def mode(path):

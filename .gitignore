@@ -219,6 +219,6 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# keycard-bunker
+# keycard-nostr-bunker
 config.toml
 *.key

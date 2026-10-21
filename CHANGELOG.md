@@ -13,7 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Every request event is verified (signature, id, age) before it is served, and served ids are kept across restarts
 - `clients revoke` rotates the generated secret; `clients pending` shows when and through which relay a client asked
 - The config loader rejects unknown keys and wrong types, validates `key_path` and `ca_public_keys`, and refuses a world-readable config that holds a PIN or secret
-- The bunker URL is printed only on a terminal; `keycard-bunker url` prints it on demand
+- The bunker URL is printed only on a terminal; `keycard-nostr-bunker url` prints it on demand
 - State files are written atomically with mode 0600 in a 0700 directory
 
 ### Fixed
@@ -38,5 +38,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Approval policy by event kind, multiple relays with reconnect
 - `service install` sets the bunker up as a systemd user service
 
-[unreleased]: https://github.com/mmlado/keycard-bunker/compare/v0.1.0...HEAD
-[0.1.0]: https://github.com/mmlado/keycard-bunker/releases/tag/v0.1.0
+[unreleased]: https://github.com/mmlado/keycard-nostr-bunker/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/mmlado/keycard-nostr-bunker/releases/tag/v0.1.0

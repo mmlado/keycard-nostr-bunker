@@ -1,7 +1,7 @@
 import pytest
 
-from keycard_bunker.cli import build_parser, main
-from keycard_bunker.signer import SoftwareSigner
+from keycard_nostr_bunker.cli import build_parser, main
+from keycard_nostr_bunker.signer import SoftwareSigner
 
 PUBKEY = 'ab' * 32
 

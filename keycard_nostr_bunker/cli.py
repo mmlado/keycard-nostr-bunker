@@ -19,9 +19,9 @@ from .nip46 import Bunker
 from .relay import RelayConn
 from .signer import Signer, SoftwareSigner
 
-log = logging.getLogger('keycard_bunker')
+log = logging.getLogger('keycard_nostr_bunker')
 
-PIN_ENV = 'KEYCARD_BUNKER_PIN'
+PIN_ENV = 'KEYCARD_NOSTR_BUNKER_PIN'
 PIN_CREDENTIAL = 'pin'
 APPROVAL_TIMEOUT = 60
 LOCAL_CONFIG = Path('config.toml')
@@ -32,7 +32,7 @@ def default_config() -> Path:
     if LOCAL_CONFIG.exists():
         return LOCAL_CONFIG
     base = Path(os.environ.get('XDG_CONFIG_HOME') or Path.home() / '.config')
-    return base / 'keycard-bunker' / 'config.toml'
+    return base / 'keycard-nostr-bunker' / 'config.toml'
 
 
 def bunker_url(pubkey_hex: str, relays: list[str], secret: str) -> str:
@@ -59,7 +59,7 @@ def show_url(url: str, reason: str) -> None:
     if sys.stdout.isatty():
         print(f'\n{url}\n', flush=True)
     else:
-        log.info('%s; run "keycard-bunker url" to show the bunker URL', reason)
+        log.info('%s; run "keycard-nostr-bunker url" to show the bunker URL', reason)
 
 
 def terminal_approver(client: str) -> bool:
@@ -117,7 +117,7 @@ def install_service(cfg: Config, config_path: Path) -> int:
         return 1
     print(f'Installed and started {path}')
     print(f'Logs:  journalctl --user -u {service.UNIT_NAME} -f')
-    print('URL:   keycard-bunker url')
+    print('URL:   keycard-nostr-bunker url')
     print('To keep it running while logged out: loginctl enable-linger')
     return 0
 
@@ -207,8 +207,8 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer) -> None:
     admission = cfg.connection
     interactive = admission.approve_clients and sys.stdin.isatty()
     if admission.approve_clients:
-        log.info('New clients need approval: %s',
-                 'a prompt here' if interactive else 'keycard-bunker clients approve <pubkey>')
+        how = 'a prompt here' if interactive else 'keycard-nostr-bunker clients approve <pubkey>'
+        log.info('New clients need approval: %s', how)
 
     def on_secret_accepted(client: str) -> None:
         if admission.rotate_secret:
@@ -266,11 +266,11 @@ def build_parser() -> argparse.ArgumentParser:
     common = argparse.ArgumentParser(add_help=False)
     common.add_argument('-c', '--config', metavar='FILE', default=argparse.SUPPRESS,
                         help='TOML config file (default: config.toml here, '
-                             'else ~/.config/keycard-bunker/config.toml)')
+                             'else ~/.config/keycard-nostr-bunker/config.toml)')
     common.add_argument('-v', '--verbose', action='store_true', default=argparse.SUPPRESS,
                         help='debug logging')
 
-    parser = argparse.ArgumentParser(prog='keycard-bunker', parents=[common],
+    parser = argparse.ArgumentParser(prog='keycard-nostr-bunker', parents=[common],
                                      description='NIP-46 remote signer backed by a Keycard')
     parser.add_argument('--version', action='version', version=f'%(prog)s {__version__}')
     commands = parser.add_subparsers(dest='command', metavar='command')

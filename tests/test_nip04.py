@@ -1,6 +1,6 @@
 import pytest
 
-from keycard_bunker import nip04
+from keycard_nostr_bunker import nip04
 
 SHARED = bytes(range(32))
 

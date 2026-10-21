@@ -3,11 +3,11 @@ import time
 
 import pytest
 
-from keycard_bunker import nip01, nip04, nip44, schnorr
-from keycard_bunker.clients import ClientList, Secret, SeenEvents
-from keycard_bunker.config import SigningConfig
-from keycard_bunker.nip46 import KIND, MAX_AGE, Bunker
-from keycard_bunker.signer import SignerUnavailable, SoftwareSigner
+from keycard_nostr_bunker import nip01, nip04, nip44, schnorr
+from keycard_nostr_bunker.clients import ClientList, Secret, SeenEvents
+from keycard_nostr_bunker.config import SigningConfig
+from keycard_nostr_bunker.nip46 import KIND, MAX_AGE, Bunker
+from keycard_nostr_bunker.signer import SignerUnavailable, SoftwareSigner
 
 TRANSPORT = SoftwareSigner((1).to_bytes(32, 'big'))
 USER = SoftwareSigner((3).to_bytes(32, 'big'))

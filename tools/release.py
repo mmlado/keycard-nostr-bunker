@@ -11,7 +11,7 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
-INIT = ROOT / 'keycard_bunker' / '__init__.py'
+INIT = ROOT / 'keycard_nostr_bunker' / '__init__.py'
 CHANGELOG = ROOT / 'CHANGELOG.md'
 
 VERSION_LINE = re.compile(r"^__version__ = '([^']+)'$", re.M)

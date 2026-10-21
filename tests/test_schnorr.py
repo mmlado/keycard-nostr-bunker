@@ -2,7 +2,7 @@
 
 import pytest
 
-from keycard_bunker import schnorr
+from keycard_nostr_bunker import schnorr
 
 VECTORS = [
     # seckey, pubkey, aux, msg, sig

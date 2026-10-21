@@ -192,7 +192,7 @@ class Bunker:
             if client in self.pending:
                 return
             self.pending.add(client, f'{int(self._now())} {source}'.strip())
-        log.warning('NIP-46 client %s waits for approval: keycard-bunker clients approve %s',
+        log.warning('NIP-46 client %s waits for approval: keycard-nostr-bunker clients approve %s',
                     client, client)
 
     def _sign_event(self, params: list) -> str:

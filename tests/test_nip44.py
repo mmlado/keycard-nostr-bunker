@@ -2,7 +2,7 @@
 
 import pytest
 
-from keycard_bunker import nip44, schnorr
+from keycard_nostr_bunker import nip44, schnorr
 
 
 @pytest.mark.parametrize('unpadded,expected', [

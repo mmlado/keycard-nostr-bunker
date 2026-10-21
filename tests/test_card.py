@@ -7,10 +7,10 @@ from keycard.constants import DerivationOption, SigningAlgorithm
 from keycard.exceptions import APDUError
 from smartcard.Exceptions import CardConnectionException, NoCardException
 
-from keycard_bunker import card as card_module
-from keycard_bunker import schnorr
-from keycard_bunker.card import CardError, CardNotPresent, KeycardSigner, list_readers
-from keycard_bunker.config import KeycardConfig
+from keycard_nostr_bunker import card as card_module
+from keycard_nostr_bunker import schnorr
+from keycard_nostr_bunker.card import CardError, CardNotPresent, KeycardSigner, list_readers
+from keycard_nostr_bunker.config import KeycardConfig
 
 SECKEY = (7).to_bytes(32, 'big')
 KEY_UID = b'\x01' * 32

@@ -63,7 +63,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment:
       name: testpypi
-      url: https://test.pypi.org/project/keycard-bunker/${{ needs.check.outputs.version }}/
+      url: https://test.pypi.org/project/keycard-nostr-bunker/${{ needs.check.outputs.version }}/
     permissions:
       id-token: write
     steps:
@@ -82,7 +82,7 @@ jobs:
     runs-on: ubuntu-24.04
     environment:
       name: pypi
-      url: https://pypi.org/project/keycard-bunker/${{ needs.check.outputs.version }}/
+      url: https://pypi.org/project/keycard-nostr-bunker/${{ needs.check.outputs.version }}/
     permissions:
       id-token: write
     steps:

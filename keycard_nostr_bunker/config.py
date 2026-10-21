@@ -30,7 +30,7 @@ class KeycardConfig:
 
 @dataclass
 class SignerConfig:
-    key_file: str = '~/.config/keycard-bunker/signer.key'
+    key_file: str = '~/.config/keycard-nostr-bunker/signer.key'
 
 
 @dataclass
