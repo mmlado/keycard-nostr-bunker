@@ -14,7 +14,8 @@ import sys
 import time
 from urllib.parse import parse_qs, urlparse
 
-from websockets.asyncio.client import connect
+from websockets.asyncio.client import ClientConnection, connect
+from websockets.exceptions import WebSocketException
 
 from keycard_nostr_bunker import envelope
 from keycard_nostr_bunker.signer import SoftwareSigner
@@ -31,6 +32,21 @@ def parse_url(url: str) -> tuple[str, list[str], str]:
     return parsed.netloc, query.get('relay', []), query.get('secret', [''])[0]
 
 
+async def open_first(relays: list[str]) -> ClientConnection:
+    """Connect to the first relay in the URL that accepts, as a client app would."""
+    if not relays:
+        raise ValueError('the URL names no relay')
+    for relay in relays:
+        try:
+            ws = await connect(relay, open_timeout=10)
+        except (OSError, TimeoutError, WebSocketException) as e:
+            print(f'{relay}: {e}', file=sys.stderr)
+            continue
+        print(f'relay {relay}')
+        return ws
+    raise ConnectionError('no relay in the URL accepted the connection')
+
+
 async def run(url: str, calls: list[tuple[str, list]], legacy: bool, key: str | None,
               perms: str) -> int:
     bunker, relays, secret = parse_url(url)
@@ -39,7 +55,8 @@ async def run(url: str, calls: list[tuple[str, list]], legacy: bool, key: str | 
     print(f'client pubkey {client.pubkey.hex()}  (prompt code {client.pubkey.hex()[:4]})')
 
     failures = 0
-    async with connect(relays[0]) as ws:
+    ws = await open_first(relays)
+    async with ws:
         await ws.send(json.dumps(['REQ', 'client', {'kinds': [envelope.KIND],
                                                     '#p': [client.pubkey.hex()],
                                                     'since': int(time.time()) - 10}]))
@@ -96,7 +113,7 @@ def main() -> int:
             ('sign_event', [{'kind': kind, 'content': 'keycard-nostr-bunker test', 'tags': [],
                              'created_at': int(time.time())}]) for kind in args.sign]
         return asyncio.run(run(args.url, calls, args.nip04, args.key, args.perms))
-    except (TimeoutError, ValueError, OSError) as e:
+    except (TimeoutError, ValueError, OSError, WebSocketException) as e:
         print(f'error: {e}', file=sys.stderr)
         return 1
 
