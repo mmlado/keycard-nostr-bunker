@@ -54,6 +54,13 @@ def state_file(cfg: Config, name: str) -> Path:
     return state_dir(cfg) / name
 
 
+def warn_if_open(directory: Path) -> None:
+    """Report a state directory other users can enter; it may be shared, so leave it alone."""
+    if directory.is_dir() and os.stat(directory).st_mode & 0o077:
+        log.warning('%s is open to other users; the files in it are private, but run: '
+                    'chmod 700 %s', directory, directory)
+
+
 def open_admission(cfg: Config, approver: Approver | None = None,
                    on_rotate: Callable[[], None] | None = None) -> Admission:
     return Admission(state_dir(cfg), secret=cfg.connection.secret,
@@ -377,6 +384,7 @@ def run_bunker(cfg: Config, config_path: Path, no_card: bool) -> int:
 
     transport = SoftwareSigner.load_or_generate(cfg.signer.key_file)
     log.info('Bunker pubkey: %s', transport.pubkey.hex())
+    warn_if_open(state_dir(cfg))
 
     card: KeycardSigner | None = None
     if no_card:

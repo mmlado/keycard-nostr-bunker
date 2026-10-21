@@ -101,7 +101,7 @@ The key path decides the public key. The default is the EIP-1581 subtree, which 
 
 ### State files
 
-Everything the bunker remembers sits next to `signer.key`, mode 0600 in a 0700 directory:
+Everything the bunker remembers sits next to `signer.key`, mode 0600 in a 0700 directory. The bunker creates that directory itself; if it already exists and other users can enter it, the bunker says so at start and leaves it as it is, since it may be a directory you share.
 
 | File | Holds |
 |---|---|

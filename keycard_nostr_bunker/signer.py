@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Protocol
 
 from . import schnorr
+from .state import write_private
 
 
 class SignerUnavailable(Exception):
@@ -46,11 +47,7 @@ class SoftwareSigner:
         return cls(bytes.fromhex(Path(path).read_text().strip()))
 
     def save(self, path: str | Path) -> None:
-        path = Path(path)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
-        with os.fdopen(fd, 'w') as f:
-            f.write(self.seckey.hex() + '\n')
+        write_private(Path(path), self.seckey.hex() + '\n')
 
     @classmethod
     def load_or_generate(cls, path: str | Path) -> 'SoftwareSigner':
