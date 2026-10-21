@@ -26,6 +26,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- `cryptography`, `ecdsa` and `pyscard` are declared as dependencies; they used to arrive only through `keycard`
 - A client approved after being pushed out of the pending list was admitted without the permissions it had requested
 - With `rotate_secret`, a waiting client that connected again got `invalid secret` instead of `pending approval`
 - Two clients presenting one URL at the same moment through different relays could both get in before the secret rotated
