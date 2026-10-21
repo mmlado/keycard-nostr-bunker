@@ -236,6 +236,10 @@ The suite covers BIP-340 and NIP-44 against the official vectors, the NIP-46 dis
 - No NFC transport.
 - Relay AUTH (NIP-42) and the `nostrconnect://` flow are not supported.
 
+## How it is built
+
+keycard-nostr-bunker is developed with substantial help from an AI coding assistant, Claude. I decide what gets built, read and test what goes in, and maintain it myself. What keeps that honest is in the repository: a pytest suite of about 200 tests that runs with flake8 and mypy on every pull request, and BIP-340 signing and NIP-44 encryption checked against their official test vectors. Signing and ECDH on the card have also been run end to end on a real Keycard with applet 4.0.1, through a public relay.
+
 ## License
 
 MIT
