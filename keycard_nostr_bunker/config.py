@@ -44,6 +44,7 @@ class ConnectionConfig:
     secret: str = ''
     rotate_secret: bool = False
     approve_clients: bool = False
+    authorized_clients: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -120,6 +121,11 @@ def _validate(cfg: Config, path: Path) -> None:
     validate_key_path(cfg.keycard.key_path)
     if cfg.signing.policy not in SIGNING_POLICIES:
         raise ValueError(f'signing.policy must be one of {SIGNING_POLICIES}')
+    for key in cfg.connection.authorized_clients:
+        if len(key) != 64 or not _is_hex(key):
+            raise ValueError(f'connection.authorized_clients: {key!r} is not '
+                             'a 64-character hex pubkey')
+    cfg.connection.authorized_clients = [key.lower() for key in cfg.connection.authorized_clients]
     if cfg.connection.rotate_secret and cfg.connection.secret:
         raise ValueError('connection.rotate_secret needs an empty connection.secret')
     if (cfg.keycard.pin or cfg.connection.secret) and path.exists() \

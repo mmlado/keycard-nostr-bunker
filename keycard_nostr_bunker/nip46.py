@@ -6,7 +6,7 @@ import logging
 import re
 import threading
 import time
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from . import nip01, nip04, nip44, schnorr
 from .clients import ClientList, Secret, SeenEvents
@@ -47,6 +47,7 @@ class Bunker:
                  approve: bool = False, approver: Callable[[str], bool] | None = None,
                  pending: ClientList | None = None, seen: SeenEvents | None = None,
                  on_secret_accepted: Callable[[str], None] | None = None,
+                 preauthorized: Iterable[str] = (),
                  now: Callable[[], float] = time.time):
         self.transport = transport
         self.user = user
@@ -58,6 +59,7 @@ class Bunker:
         self.pending = pending if pending is not None else ClientList(limit=PENDING_LIMIT)
         self.seen = seen if seen is not None else SeenEvents(max_age=MAX_AGE)
         self.on_secret_accepted = on_secret_accepted
+        self.preauthorized = frozenset(preauthorized)
         self._now = now
         self._lock = threading.Lock()
         self._prompt = threading.Lock()
@@ -140,7 +142,7 @@ class Bunker:
     def _dispatch(self, method: str, params: list, client: str, source: str) -> str:
         if method == 'connect':
             return self._connect(params, client, source)
-        if client not in self.clients:
+        if not self._admitted(client):
             log.info('NIP-46 %s from unauthorized %s', method, client)
             raise RequestError('unauthorized')
         match method:
@@ -161,8 +163,11 @@ class Bunker:
             case _:
                 raise RequestError(f'unsupported method: {method}')
 
+    def _admitted(self, client: str) -> bool:
+        return client in self.preauthorized or client in self.clients
+
     def _connect(self, params: list, client: str, source: str) -> str:
-        if client in self.clients:
+        if self._admitted(client):
             return 'ack'
         offered = str(params[1]) if len(params) > 1 and params[1] is not None else ''
         if not hmac.compare_digest(offered.encode(), self.secret.current.encode()):
@@ -222,8 +227,8 @@ class Bunker:
         shared = self._transport_shared.get(client)
         if shared is None:
             shared = self.transport.ecdh(bytes.fromhex(client))
-            # Only admitted clients are cached, so the cache is bounded by the clients file.
-            if client in self.clients:
+            # Only admitted clients are cached, so the cache stays bounded.
+            if self._admitted(client):
                 self._transport_shared[client] = shared
         return shared
 

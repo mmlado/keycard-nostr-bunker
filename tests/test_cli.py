@@ -97,3 +97,15 @@ def test_bad_config_reported(tmp_path, caplog):
     path.write_text('[signing]\npolicy = "nope"\n')
     assert main(['clients', 'list', '-c', str(path)]) == 1
     assert 'signing.policy' in caplog.text
+
+
+def test_clients_from_the_config(tmp_path, capsys):
+    other = 'cd' * 32
+    c = config(tmp_path, f'[connection]\nauthorized_clients = ["{other}"]\n')
+    main(['clients', 'approve', PUBKEY, *c])
+    capsys.readouterr()
+    assert main(['clients', 'list', *c]) == 0
+    rows = capsys.readouterr().out.splitlines()
+    assert rows[0] == f'{other}  from the config' and rows[1].startswith(PUBKEY)
+    assert main(['clients', 'revoke', other, *c]) == 1
+    assert 'remove it from the config' in capsys.readouterr().out

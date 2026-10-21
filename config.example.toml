@@ -43,3 +43,6 @@ rotate_secret = false
 # Ask before admitting a client: a prompt when running in a terminal,
 # otherwise `keycard-nostr-bunker clients approve <pubkey>` while the client waits.
 approve_clients = false
+# Client pubkeys, 64 hex characters, admitted without the secret: for example
+# an app whose key you already know. Remove one here to revoke it.
+authorized_clients = []

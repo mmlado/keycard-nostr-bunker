@@ -360,3 +360,16 @@ def test_busy_prompt_parks_the_client():
     with b._prompt:
         assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['error'] == 'pending approval'
     assert CLIENT.pubkey.hex() in b.pending
+
+
+def test_preauthorized_client_needs_no_secret():
+    b = Bunker(TRANSPORT, USER, ALL, SECRET, preauthorized=[CLIENT.pubkey.hex()])
+    assert call('ping', [], b)['result'] == 'pong'
+    assert call('connect', [TRANSPORT.pubkey.hex()], b)['result'] == 'ack'
+    assert len(b.clients) == 0
+    assert list(b._transport_shared) == [CLIENT.pubkey.hex()]
+
+
+def test_preauthorized_list_admits_only_its_keys():
+    b = Bunker(TRANSPORT, USER, ALL, SECRET, preauthorized=[THIRD_PARTY.pubkey.hex()])
+    assert call('ping', [], b)['error'] == 'unauthorized'

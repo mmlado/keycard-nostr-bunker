@@ -145,7 +145,9 @@ def manage_clients(cfg: Config, action: str, pubkey: str | None) -> int:
     pending = ClientList(state_file(cfg, 'pending'), limit=nip46.PENDING_LIMIT)
     match action:
         case 'list':
-            rows = [f'{key}  {_when(meta)}'.rstrip() for key, meta in clients.items()]
+            rows = [f'{key}  from the config' for key in cfg.connection.authorized_clients]
+            rows += [f'{key}  {_when(meta)}'.rstrip() for key, meta in clients.items()
+                     if key not in cfg.connection.authorized_clients]
             print('\n'.join(rows) if rows else 'No admitted clients')
         case 'pending':
             rows = [f'{key}  {_when(meta)}'.rstrip() for key, meta in pending.items()]
@@ -157,6 +159,9 @@ def manage_clients(cfg: Config, action: str, pubkey: str | None) -> int:
                   else f'Approved {pubkey}, which was not waiting for approval')
         case 'revoke':
             assert pubkey
+            if pubkey in cfg.connection.authorized_clients:
+                print(f'{pubkey} is in connection.authorized_clients; remove it from the config')
+                return 1
             if not clients.remove(pubkey):
                 print(f'{pubkey} was not an admitted client')
                 return 0
@@ -218,7 +223,8 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer) -> None:
     bunker = Bunker(transport, user, cfg.signing, secret, clients,
                     approve=admission.approve_clients,
                     approver=terminal_approver if interactive else None,
-                    pending=pending, seen=seen, on_secret_accepted=on_secret_accepted)
+                    pending=pending, seen=seen, on_secret_accepted=on_secret_accepted,
+                    preauthorized=admission.authorized_clients)
     conns: list[RelayConn] = []
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()

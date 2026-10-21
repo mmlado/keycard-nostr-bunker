@@ -101,3 +101,11 @@ def test_secrets_need_a_private_config(tmp_path):
         load_config(write(tmp_path, '[connection]\nsecret = "s"\n', mode=0o640))
     assert load_config(write(tmp_path, '[keycard]\npin = "123456"\n')).keycard.pin == '123456'
     assert load_config(write(tmp_path, '[relay]\nurls = ["wss://a"]\n', mode=0o644))
+
+
+def test_authorized_clients(tmp_path):
+    key = 'AB' * 32
+    cfg = load_config(write(tmp_path, f'[connection]\nauthorized_clients = ["{key}"]\n'))
+    assert cfg.connection.authorized_clients == [key.lower()]
+    with pytest.raises(ValueError, match='authorized_clients'):
+        load_config(write(tmp_path, '[connection]\nauthorized_clients = ["abcd"]\n'))
