@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 from typing import Callable
 
-from . import __version__, nip46, service
+from . import __version__, service
 from .admission import CONFIG, Admission, AdmissionError, Approver, ClientRecord, defer
 from .card import CardError, KeycardSigner, list_readers
 from .config import Config, load_config
@@ -21,7 +21,8 @@ from .nip46 import Bunker
 from .perms import Permissions
 from .relay import Relay, RelayConn, RelayFactory
 from .signer import Signer, SoftwareSigner
-from .state import SeenEvents, StateDir
+from .replay import ReplayWindow
+from .state import StateDir
 
 log = logging.getLogger('keycard_nostr_bunker')
 
@@ -275,8 +276,7 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer,
 
     admission = open_admission(cfg, approver, on_rotate=rotated)
     log.info('Admitted clients: %d', len(admission.clients()))
-    seen = SeenEvents(state(cfg).seen, max_age=nip46.MAX_AGE * 5)
-    bunker = Bunker(transport, user, cfg.signing, admission, seen=seen)
+    bunker = Bunker(transport, user, cfg.signing, admission, ReplayWindow(state(cfg).seen))
     conns: list[Relay] = []
     if stop is None:
         stop = asyncio.Event()

@@ -8,7 +8,7 @@ from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
-from .nip46 import MAX_AGE
+from .replay import WINDOW
 
 log = logging.getLogger(__name__)
 
@@ -91,8 +91,8 @@ class RelayConn:
             delay = min(delay * 2, RECONNECT_MAX)
 
     async def _subscribe(self) -> None:
-        # Requests older than MAX_AGE are refused anyway, so do not ask for them.
-        since = int(time.time()) - MAX_AGE
+        # Requests older than the replay window are refused anyway, so do not ask for them.
+        since = int(time.time()) - WINDOW
         await self.send(['REQ', SUBSCRIPTION_ID,
                          {'kinds': [24133], '#p': [self._pubkey], 'since': since}])
 

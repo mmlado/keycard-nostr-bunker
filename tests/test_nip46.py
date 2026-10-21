@@ -6,9 +6,9 @@ import pytest
 from keycard_nostr_bunker import nip01, nip04, nip44, schnorr
 from keycard_nostr_bunker.admission import Admission, defer
 from keycard_nostr_bunker.config import SigningConfig
-from keycard_nostr_bunker.nip46 import KIND, MAX_AGE, Bunker
+from keycard_nostr_bunker.nip46 import KIND, Bunker
+from keycard_nostr_bunker.replay import WINDOW, ReplayWindow
 from keycard_nostr_bunker.signer import SignerUnavailable, SoftwareSigner
-from keycard_nostr_bunker.state import SeenEvents
 
 TRANSPORT = SoftwareSigner((1).to_bytes(32, 'big'))
 USER = SoftwareSigner((3).to_bytes(32, 'big'))
@@ -53,13 +53,13 @@ def decrypt_reply(reply, legacy=False, client=CLIENT):
     return json.loads(plain)
 
 
-def bunker(policy='all', kinds=(), authorized=True, user=USER, seen=None, **admission):
+def bunker(policy='all', kinds=(), authorized=True, user=USER, replay=None, **admission):
     """A bunker whose client is admitted through the config unless authorized is False."""
     admission.setdefault('secret', SECRET)
     if authorized:
         admission.setdefault('authorized', [CLIENT.pubkey.hex()])
     return Bunker(TRANSPORT, user, SigningConfig(policy, list(kinds)), Admission(None, **admission),
-                  seen=seen)
+                  replay)
 
 
 def call(method, params, b=None, legacy=False):
@@ -200,9 +200,9 @@ def test_duplicate_event_ignored():
 def test_seen_events_survive_a_restart(tmp_path):
     path = tmp_path / 'seen'
     event = request('ping', [])
-    first = bunker(seen=SeenEvents(path))
+    first = bunker(replay=ReplayWindow(path))
     assert first.handle(event) is not None
-    second = bunker(seen=SeenEvents(path))
+    second = bunker(replay=ReplayWindow(path))
     assert second.handle(event) is None
     assert second.handle(request('ping', [])) is not None
 
@@ -247,9 +247,9 @@ def test_tampered_or_unsigned_events_are_rejected():
 def test_stale_or_future_events_are_rejected():
     b = bunker()
     now = int(time.time())
-    assert b.handle(request('ping', [], created_at=now - MAX_AGE - 5)) is None
-    assert b.handle(request('ping', [], created_at=now + MAX_AGE + 5)) is None
-    assert b.handle(request('ping', [], created_at=now - MAX_AGE + 5)) is not None
+    assert b.handle(request('ping', [], created_at=now - WINDOW - 5)) is None
+    assert b.handle(request('ping', [], created_at=now + WINDOW + 5)) is None
+    assert b.handle(request('ping', [], created_at=now - WINDOW + 5)) is not None
 
 
 def test_transport_cache_only_for_admitted_clients():
@@ -298,7 +298,7 @@ def test_signer_unavailable_is_reported_to_client():
 
 def test_strangers_do_not_reach_the_seen_file_or_crowd_out_known_clients(tmp_path):
     path = tmp_path / 'seen'
-    b = bunker(seen=SeenEvents(path, limit=5))
+    b = bunker(replay=ReplayWindow(path, limit=5))
     known = request('ping', [])
     assert b.handle(known) is not None
     for _ in range(20):
