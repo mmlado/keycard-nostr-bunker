@@ -23,7 +23,7 @@ except ImportError:
     fcntl = None  # type: ignore[assignment]
 
 from .perms import Permissions
-from .state import DIR_MODE, FILE_MODE, write_private
+from .state import DIR_MODE, FILE_MODE, StateDir, write_private
 
 log = logging.getLogger(__name__)
 
@@ -242,27 +242,24 @@ class _Locks:
 class Admission:
     """Decides who may use the bunker, and remembers it.
 
-    State lives in state_dir: the secret, the clients and pending files, and a
-    lock file shared with the CLI. Without a state_dir it stays in memory and
-    the secret must be fixed. Clients in authorized get in without the secret
+    State lives in the state directory: the secret, the clients and pending
+    files, and a lock file shared with the CLI. Without one it stays in memory
+    and the secret must be fixed. Clients in authorized get in without the secret
     and are unrestricted; the list is read once, so changing it takes a restart.
     Safe to call from several threads.
     """
 
-    def __init__(self, state_dir: Path | None, secret: str = '', rotate: bool = False,
+    def __init__(self, state: StateDir | None, secret: str = '', rotate: bool = False,
                  approver: Approver | None = None, authorized: Iterable[str] = (),
                  on_rotate: Callable[[], None] | None = None,
                  now: Callable[[], float] = time.time):
         if rotate and secret:
             raise ValueError('a secret fixed in the config cannot rotate')
 
-        def path(name: str) -> Path | None:
-            return state_dir / name if state_dir is not None else None
-
-        self._secret = _Secret(secret, path('secret'))
-        self._clients = _RecordFile(path('clients'))
-        self._pending = _RecordFile(path('pending'), PENDING_LIMIT)
-        self._locks = _Locks(path('admission.lock'))
+        self._secret = _Secret(secret, state.secret if state else None)
+        self._clients = _RecordFile(state.clients if state else None)
+        self._pending = _RecordFile(state.pending if state else None, PENDING_LIMIT)
+        self._locks = _Locks(state.admission_lock if state else None)
         self._rotate = rotate
         self._approver = approver
         self._authorized = frozenset(authorized)

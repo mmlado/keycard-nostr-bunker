@@ -1,6 +1,7 @@
 import stat
+import time
 
-from keycard_nostr_bunker.state import SeenEvents, write_private
+from keycard_nostr_bunker.state import SeenEvents, StateDir, write_private
 
 
 def mode(path):
@@ -77,3 +78,38 @@ def test_load_keeps_only_the_newest_ids(tmp_path):
     seen = SeenEvents(path, max_age=100, limit=5, now=lambda: 1_000_000)
     assert len(seen) == 5 and 'id49' in seen and 'id0' not in seen
     assert len(path.read_text().splitlines()) == 5
+
+
+def test_layout_names_every_file_once(tmp_path):
+    state = StateDir.for_signer_key(tmp_path / 'keys' / 'bunker.key')
+    assert state.path == tmp_path / 'keys' and state.signer_key.name == 'bunker.key'
+    names = [path.name for path in state.files()]
+    assert len(names) == len(set(names))
+    assert all(path.parent == state.path for path in state.files())
+
+
+def test_every_file_the_bunker_writes_is_in_the_layout(tmp_path):
+    from keycard_nostr_bunker.admission import Admission, AdmissionError, defer
+    from keycard_nostr_bunker.signer import SoftwareSigner
+    state = StateDir(tmp_path / 'state')
+    SoftwareSigner.load_or_generate(state.signer_key)
+    admission = Admission(state, approver=defer)
+    try:
+        admission.connect('a' * 64, admission.secret, 'sign_event:1', 'wss://relay.example')
+    except AdmissionError:
+        pass
+    admission.approve('a' * 64)
+    SeenEvents(state.seen).record('id', int(time.time()))
+    written = set(state.path.iterdir())
+    assert written and written <= set(state.files())
+
+
+def test_open_to_others(tmp_path):
+    shared = tmp_path / 'shared'
+    shared.mkdir(mode=0o755)
+    shared.chmod(0o755)
+    assert StateDir(shared).open_to_others()
+    private = tmp_path / 'private'
+    private.mkdir(mode=0o700)
+    assert not StateDir(private).open_to_others()
+    assert not StateDir(tmp_path / 'missing').open_to_others()

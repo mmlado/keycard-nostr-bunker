@@ -11,6 +11,7 @@ from keycard_nostr_bunker import card as card_module
 from keycard_nostr_bunker import schnorr
 from keycard_nostr_bunker.card import CardError, CardNotPresent, KeycardSigner, list_readers
 from keycard_nostr_bunker.config import KeycardConfig
+from keycard_nostr_bunker.state import StateDir
 
 SECKEY = (7).to_bytes(32, 'big')
 KEY_UID = b'\x01' * 32
@@ -116,7 +117,7 @@ def rig(tmp_path):
             cards.append(FakeCard(version, cas, **state['card_kwargs']))
             return cards[-1]
 
-        signer = KeycardSigner(cfg, cfg.pin, tmp_path / 'user.pubkey', factory,
+        signer = KeycardSigner(cfg, cfg.pin, StateDir(tmp_path), factory,
                                lambda: list(state['readers']), FakeMonitor)
         if start:
             signer.start()

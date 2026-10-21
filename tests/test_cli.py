@@ -2,6 +2,7 @@ import pytest
 
 from keycard_nostr_bunker.admission import Admission, AdmissionError, defer
 from keycard_nostr_bunker.cli import build_parser, main
+from keycard_nostr_bunker.state import StateDir
 from keycard_nostr_bunker.signer import SoftwareSigner
 
 PUBKEY = 'ab' * 32
@@ -9,7 +10,7 @@ PUBKEY = 'ab' * 32
 
 def ask(tmp_path, pubkey=PUBKEY, perms='', secret=None):
     """Park a client the way the bunker does when approval is on."""
-    bunker = Admission(tmp_path, secret=secret or '', approver=defer)
+    bunker = Admission(StateDir(tmp_path), secret=secret or '', approver=defer)
     with pytest.raises(AdmissionError, match='pending approval'):
         bunker.connect(pubkey, secret or bunker.secret, perms, 'wss://relay.example')
 

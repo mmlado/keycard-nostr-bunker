@@ -3,6 +3,7 @@ import stat
 from keycard_nostr_bunker import schnorr
 from keycard_nostr_bunker.cli import warn_if_open
 from keycard_nostr_bunker.signer import SoftwareSigner
+from keycard_nostr_bunker.state import StateDir
 
 
 def mode(path):
@@ -21,10 +22,10 @@ def test_an_open_state_directory_is_reported_and_left_alone(tmp_path, caplog):
     open_dir = tmp_path / 'shared'
     open_dir.mkdir(mode=0o755)
     open_dir.chmod(0o755)
-    warn_if_open(open_dir)
+    warn_if_open(StateDir(open_dir))
     assert 'chmod 700' in caplog.text and mode(open_dir) == 0o755
     caplog.clear()
     private = tmp_path / 'private'
     private.mkdir(mode=0o700)
-    warn_if_open(private)
+    warn_if_open(StateDir(private))
     assert caplog.text == ''

@@ -11,7 +11,6 @@ signing and ECDH raise CardNotPresent.
 import hashlib
 import logging
 import threading
-from pathlib import Path
 from typing import Any, Callable, TypeVar
 
 from keycard import KeyCard, constants
@@ -23,7 +22,7 @@ from smartcard.pcsc.PCSCExceptions import BaseSCardException
 from smartcard.System import readers as pcsc_readers
 
 from . import schnorr
-from .state import write_private
+from .state import StateDir, write_private
 from .config import KeycardConfig
 from .signer import SignerUnavailable
 
@@ -76,14 +75,14 @@ class _Observer(CardObserver):
 
 
 class KeycardSigner:
-    def __init__(self, cfg: KeycardConfig, pin: str, pubkey_file: str | Path,
+    def __init__(self, cfg: KeycardConfig, pin: str, state: StateDir,
                  card_factory: Callable[[list[bytes]], KeyCard] = _new_card,
                  readers_fn: Callable[[], list[str]] = list_readers,
                  monitor_factory: Callable[[], Any] | None = CardMonitor):
         self._cfg = cfg
         self._pin = pin
-        self._pubkey_file = Path(pubkey_file)
-        self._rejection_file = self._pubkey_file.with_name('pin.rejected')
+        self._pubkey_file = state.user_pubkey
+        self._rejection_file = state.pin_rejected
         self._card_factory = card_factory
         self._readers_fn = readers_fn
         self._monitor_factory = monitor_factory

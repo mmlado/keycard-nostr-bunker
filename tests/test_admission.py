@@ -11,6 +11,7 @@ import pytest
 from keycard_nostr_bunker.admission import (CONFIG, PENDING_LIMIT, Admission, AdmissionError,
                                             ClientRecord, defer)
 from keycard_nostr_bunker.perms import Permissions
+from keycard_nostr_bunker.state import StateDir
 
 A, B, C = ('a' * 64), ('b' * 64), ('c' * 64)
 SECRET = 's3cret'
@@ -65,7 +66,7 @@ def test_secret_is_required_and_a_fixed_one_cannot_rotate():
 
 
 def test_secret_file_is_generated_private_and_shared(tmp_path):
-    bunker, cli = Admission(tmp_path), Admission(tmp_path)
+    bunker, cli = Admission(StateDir(tmp_path)), Admission(StateDir(tmp_path))
     first = bunker.secret
     assert len(first) >= 16 and mode(tmp_path / 'secret') == 0o600
     assert cli.secret == first
@@ -100,9 +101,9 @@ def test_admitted_client_reconnects_without_the_secret():
 
 
 def test_admitted_clients_survive_a_restart(tmp_path):
-    first = Admission(tmp_path)
+    first = Admission(StateDir(tmp_path))
     first.connect(A, first.secret, 'sign_event:1', RELAY)
-    second = Admission(tmp_path)
+    second = Admission(StateDir(tmp_path))
     assert second.admitted(A)
     refused('sign_event for kind 3', second.require, A, 'sign_event', 3)
 
@@ -151,13 +152,13 @@ def test_config_clients_need_no_secret_and_are_unrestricted():
 
 
 def test_revoking_a_key_in_both_config_and_file_clears_the_file(tmp_path):
-    old = Admission(tmp_path)
+    old = Admission(StateDir(tmp_path))
     old.connect(A, old.secret, '', RELAY)
-    cli = Admission(tmp_path, authorized=[A])
+    cli = Admission(StateDir(tmp_path), authorized=[A])
     result = cli.revoke(A)
     assert result.removed and result.in_config and result.rotated
     assert cli.admitted(A)
-    after_restart = Admission(tmp_path)
+    after_restart = Admission(StateDir(tmp_path))
     assert not after_restart.admitted(A)
 
 
@@ -183,13 +184,13 @@ def test_approver_is_not_asked_without_the_secret():
 
 
 def test_deferred_client_waits_and_is_approved_from_the_cli(tmp_path):
-    bunker = Admission(tmp_path, approver=defer)
+    bunker = Admission(StateDir(tmp_path), approver=defer)
     refused('pending approval', bunker.connect, A, bunker.secret, 'sign_event:1', RELAY)
     assert not bunker.admitted(A)
-    [waiting] = Admission(tmp_path).pending()
+    [waiting] = Admission(StateDir(tmp_path)).pending()
     assert (waiting.pubkey, waiting.via) == (A, RELAY)
     assert waiting.perms.items == frozenset({'sign_event:1'})
-    approved = Admission(tmp_path).approve(A)
+    approved = Admission(StateDir(tmp_path)).approve(A)
     assert approved.perms.items == frozenset({'sign_event:1'})
     assert bunker.admitted(A) and bunker.pending() == []
     refused('sign_event for kind 3', bunker.require, A, 'sign_event', 3)
@@ -197,19 +198,19 @@ def test_deferred_client_waits_and_is_approved_from_the_cli(tmp_path):
 
 def test_retry_while_pending_is_not_asked_for_a_rotated_secret(tmp_path):
     rotations = []
-    bunker = Admission(tmp_path, rotate=True, approver=defer,
+    bunker = Admission(StateDir(tmp_path), rotate=True, approver=defer,
                        on_rotate=lambda: rotations.append(1))
     url_secret = bunker.secret
     refused('pending approval', bunker.connect, A, url_secret, 'sign_event:1', RELAY)
     assert bunker.secret != url_secret and rotations == [1]
     refused('pending approval', bunker.connect, A, url_secret, 'sign_event:1', RELAY)
-    Admission(tmp_path).approve(A)
+    Admission(StateDir(tmp_path)).approve(A)
     assert bunker.connect(A, url_secret, '', RELAY) == 'ack'
     assert rotations == [1]
 
 
 def test_approve_refuses_anything_not_waiting(tmp_path):
-    adm = Admission(tmp_path)
+    adm = Admission(StateDir(tmp_path))
     refused('is not waiting for approval', adm.approve, A)
     adm.connect(B, adm.secret, '', RELAY)
     refused('is already admitted', adm.approve, B)
@@ -217,14 +218,14 @@ def test_approve_refuses_anything_not_waiting(tmp_path):
 
 
 def test_a_client_pushed_out_of_pending_cannot_be_approved_unrestricted(tmp_path):
-    bunker = Admission(tmp_path, approver=defer)
+    bunker = Admission(StateDir(tmp_path), approver=defer)
     secret = bunker.secret
     first = f'{0:064x}'
     refused('pending approval', bunker.connect, first, secret, 'sign_event:1', RELAY)
     for i in range(1, PENDING_LIMIT + 1):
         refused('pending approval', bunker.connect, f'{i:064x}', secret, '', RELAY)
     assert first not in {r.pubkey for r in bunker.pending()}
-    refused('is not waiting for approval', Admission(tmp_path).approve, first)
+    refused('is not waiting for approval', Admission(StateDir(tmp_path)).approve, first)
     assert not bunker.admitted(first)
 
 
@@ -238,14 +239,14 @@ def test_a_busy_or_deferring_approver_keeps_the_client_pending():
 # one URL, one client
 
 def test_rotation_lets_one_url_admit_one_client(tmp_path):
-    adm = Admission(tmp_path, rotate=True)
+    adm = Admission(StateDir(tmp_path), rotate=True)
     secret = adm.secret
     assert adm.connect(A, secret, '', RELAY) == 'ack'
     refused('invalid secret', adm.connect, B, secret, '', RELAY)
 
 
 def test_concurrent_connects_with_one_url_admit_one_client(tmp_path):
-    adm = Admission(tmp_path, rotate=True)
+    adm = Admission(StateDir(tmp_path), rotate=True)
     secret = adm.secret
     barrier = threading.Barrier(8)
     results = []
@@ -269,7 +270,7 @@ def test_concurrent_connects_with_one_url_admit_one_client(tmp_path):
 # revoking
 
 def test_revoke_removes_and_rotates(tmp_path):
-    adm = Admission(tmp_path)
+    adm = Admission(StateDir(tmp_path))
     secret = adm.secret
     adm.connect(A, secret, '', RELAY)
     result = adm.revoke(A)
@@ -279,7 +280,7 @@ def test_revoke_removes_and_rotates(tmp_path):
 
 
 def test_revoke_drops_a_pending_request_and_rotates(tmp_path):
-    adm = Admission(tmp_path, approver=defer)
+    adm = Admission(StateDir(tmp_path), approver=defer)
     secret = adm.secret
     refused('pending approval', adm.connect, A, secret, '', RELAY)
     result = adm.revoke(A)
@@ -294,7 +295,7 @@ def test_revoke_with_a_fixed_secret_says_it_cannot_rotate():
 
 
 def test_revoke_of_a_stranger_changes_nothing(tmp_path):
-    adm = Admission(tmp_path)
+    adm = Admission(StateDir(tmp_path))
     secret = adm.secret
     result = adm.revoke(A)
     assert not (result.removed or result.dropped_pending or result.in_config or result.rotated)
@@ -304,7 +305,7 @@ def test_revoke_of_a_stranger_changes_nothing(tmp_path):
 # the bunker and the CLI share the state directory
 
 def test_cli_changes_reach_the_bunker_at_once(tmp_path):
-    bunker, cli = Admission(tmp_path), Admission(tmp_path)
+    bunker, cli = Admission(StateDir(tmp_path)), Admission(StateDir(tmp_path))
     for _ in range(20):
         bunker.connect(A, bunker.secret, '', RELAY)
         assert bunker.admitted(A)
@@ -314,7 +315,7 @@ def test_cli_changes_reach_the_bunker_at_once(tmp_path):
 
 def test_state_files_are_private(tmp_path):
     state = tmp_path / 'state'
-    adm = Admission(state, approver=defer)
+    adm = Admission(StateDir(state), approver=defer)
     refused('pending approval', adm.connect, A, adm.secret, '', RELAY)
     adm.approve(A)
     assert mode(state) == 0o700
@@ -323,7 +324,7 @@ def test_state_files_are_private(tmp_path):
 
 
 def test_changes_wait_for_the_lock_file(tmp_path):
-    adm = Admission(tmp_path, approver=defer)
+    adm = Admission(StateDir(tmp_path), approver=defer)
     refused('pending approval', adm.connect, A, adm.secret, '', RELAY)
     fd = os.open(tmp_path / 'admission.lock', os.O_RDWR | os.O_CREAT, 0o600)
     fcntl.flock(fd, fcntl.LOCK_EX)

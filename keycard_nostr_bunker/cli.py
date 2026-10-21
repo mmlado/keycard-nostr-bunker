@@ -21,7 +21,7 @@ from .nip46 import Bunker
 from .perms import Permissions
 from .relay import Relay, RelayConn, RelayFactory
 from .signer import Signer, SoftwareSigner
-from .state import SeenEvents
+from .state import SeenEvents, StateDir
 
 log = logging.getLogger('keycard_nostr_bunker')
 
@@ -46,24 +46,20 @@ def bunker_url(pubkey_hex: str, relays: list[str], secret: str) -> str:
     return f'bunker://{pubkey_hex}?' + '&'.join(params)
 
 
-def state_dir(cfg: Config) -> Path:
-    return Path(cfg.signer.key_file).parent
+def state(cfg: Config) -> StateDir:
+    return StateDir.for_signer_key(cfg.signer.key_file)
 
 
-def state_file(cfg: Config, name: str) -> Path:
-    return state_dir(cfg) / name
-
-
-def warn_if_open(directory: Path) -> None:
+def warn_if_open(state: StateDir) -> None:
     """Report a state directory other users can enter; it may be shared, so leave it alone."""
-    if directory.is_dir() and os.stat(directory).st_mode & 0o077:
+    if state.open_to_others():
         log.warning('%s is open to other users; the files in it are private, but run: '
-                    'chmod 700 %s', directory, directory)
+                    'chmod 700 %s', state.path, state.path)
 
 
 def open_admission(cfg: Config, approver: Approver | None = None,
                    on_rotate: Callable[[], None] | None = None) -> Admission:
-    return Admission(state_dir(cfg), secret=cfg.connection.secret,
+    return Admission(state(cfg), secret=cfg.connection.secret,
                      rotate=cfg.connection.rotate_secret, approver=approver,
                      authorized=cfg.connection.authorized_clients, on_rotate=on_rotate)
 
@@ -237,14 +233,14 @@ def revoke(cfg: Config, admission: Admission, pubkey: str) -> int:
                     'or the revoked client can connect again')
     if result.rotated:
         print('Secret rotated; the running bunker uses the new one at once.')
-        key_file = Path(cfg.signer.key_file)
+        key_file = state(cfg).signer_key
         if key_file.exists():
             print(current_url(cfg, SoftwareSigner.load(key_file), admission.secret))
     return 1 if result.in_config else 0
 
 
 def show_url_command(cfg: Config) -> int:
-    key_file = Path(cfg.signer.key_file)
+    key_file = state(cfg).signer_key
     if not key_file.exists():
         log.error('%s does not exist yet; run the bunker once first', key_file)
         return 1
@@ -253,7 +249,7 @@ def show_url_command(cfg: Config) -> int:
 
 
 def open_card(cfg: Config) -> KeycardSigner:
-    signer = KeycardSigner(cfg.keycard, resolve_pin(cfg), state_file(cfg, 'user.pubkey'))
+    signer = KeycardSigner(cfg.keycard, resolve_pin(cfg), state(cfg))
     signer.start()
     if signer.refused:
         log.error('Keycard: refused: %s', signer.refused)
@@ -279,7 +275,7 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer,
 
     admission = open_admission(cfg, approver, on_rotate=rotated)
     log.info('Admitted clients: %d', len(admission.clients()))
-    seen = SeenEvents(state_file(cfg, 'seen'), max_age=nip46.MAX_AGE * 5)
+    seen = SeenEvents(state(cfg).seen, max_age=nip46.MAX_AGE * 5)
     bunker = Bunker(transport, user, cfg.signing, admission, seen=seen)
     conns: list[Relay] = []
     if stop is None:
@@ -404,14 +400,14 @@ def main(argv: list[str] | None = None) -> int:
 def run_bunker(cfg: Config, config_path: Path, no_card: bool) -> int:
     log.info('Config: %s%s', config_path.resolve(),
              '' if config_path.exists() else ' (missing, using defaults)')
-    log.info('State: %s', Path(cfg.signer.key_file).parent)
+    log.info('State: %s', state(cfg).path)
     if not cfg.relay.urls:
         log.error('No relay URLs configured')
         return 1
 
-    transport = SoftwareSigner.load_or_generate(cfg.signer.key_file)
+    transport = SoftwareSigner.load_or_generate(state(cfg).signer_key)
     log.info('Bunker pubkey: %s', transport.pubkey.hex())
-    warn_if_open(state_dir(cfg))
+    warn_if_open(state(cfg))
 
     card: KeycardSigner | None = None
     if no_card:
