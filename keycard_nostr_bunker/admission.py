@@ -276,6 +276,10 @@ class Admission:
     def admitted(self, client: str) -> bool:
         return client in self._authorized or self._clients.get(client) is not None
 
+    def known(self, client: str) -> bool:
+        """Admitted, or waiting for approval."""
+        return self.admitted(client) or self._pending.get(client) is not None
+
     def require(self, client: str, method: str, kind: int | None = None) -> None:
         """Refuse a request the client may not make; pass the event kind for sign_event."""
         perms = self._permissions(client)

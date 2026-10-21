@@ -294,3 +294,23 @@ def test_signer_unavailable_is_reported_to_client():
     assert r == {'id': r['id'], 'result': '', 'error': 'Keycard not present'}
     r = call('nip44_encrypt', [THIRD_PARTY.pubkey.hex(), 'x'], b)
     assert r['error'] == 'Keycard not present'
+
+
+def test_strangers_do_not_reach_the_seen_file_or_crowd_out_known_clients(tmp_path):
+    path = tmp_path / 'seen'
+    b = bunker(seen=SeenEvents(path, limit=5))
+    known = request('ping', [])
+    assert b.handle(known) is not None
+    for _ in range(20):
+        stranger = SoftwareSigner.generate()
+        reply = b.handle(request('ping', [], client=stranger))
+        assert decrypt_reply(reply, client=stranger)['error'] == 'unauthorized'
+    assert b.handle(known) is None
+    assert path.read_text() == f"{known['id']} {known['created_at']}\n"
+
+
+def test_a_strangers_replayed_connect_is_dropped():
+    b = bunker(authorized=False, approver=defer)
+    stranger_connect = request('connect', [TRANSPORT.pubkey.hex(), SECRET])
+    assert decrypt_reply(b.handle(stranger_connect))['error'] == 'pending approval'
+    assert b.handle(stranger_connect) is None

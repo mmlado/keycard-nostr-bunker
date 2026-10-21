@@ -110,7 +110,7 @@ Everything the bunker remembers sits next to `signer.key`, mode 0600 in a 0700 d
 | `clients` | admitted client pubkeys, with when and through which relay they came |
 | `pending` | clients waiting for approval, with the permissions they asked for |
 | `admission.lock` | lets the bunker and the `clients` commands take turns changing `clients`, `pending` and `secret` |
-| `seen` | ids of recent requests, so a restart does not serve them twice |
+| `seen` | ids of recent requests from known clients, so a restart does not serve them twice |
 | `user.pubkey` | your public key and the card's key UID |
 | `pin.rejected` | present after a wrong PIN; removed by a successful one |
 

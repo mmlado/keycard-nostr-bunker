@@ -18,6 +18,7 @@ log = logging.getLogger(__name__)
 KIND = 24133
 # A request older than this, or further ahead of our clock, is refused.
 MAX_AGE = 60
+STRANGER_LIMIT = 1024
 METHODS = frozenset({'get_public_key', 'ping', 'sign_event', 'nip44_encrypt', 'nip44_decrypt',
                      'nip04_encrypt', 'nip04_decrypt'})
 
@@ -46,6 +47,7 @@ class Bunker:
         self.signing = signing
         self.admission = admission
         self.seen = seen if seen is not None else SeenEvents(max_age=MAX_AGE)
+        self._strangers = SeenEvents(max_age=MAX_AGE, limit=STRANGER_LIMIT)
         self._now = now
         self._lock = threading.Lock()
         self._transport_shared: dict[str, bytes] = {}
@@ -63,9 +65,12 @@ class Bunker:
             log.warning('NIP-46 rejected event: %s', e)
             return None
         with self._lock:
-            if event_id in self.seen:
+            if event_id in self.seen or event_id in self._strangers:
                 return None
-            self.seen.record(event_id, created_at)
+            # A stranger can only connect, and replaying that is harmless, so its ids
+            # stay in memory and cannot crowd known clients' ids out of the seen file.
+            known = self.admission.known(client)
+            (self.seen if known else self._strangers).record(event_id, created_at)
         content = event['content']
         # Older clients still encrypt the transport with NIP-04.
         legacy = '?iv=' in content

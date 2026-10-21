@@ -8,6 +8,8 @@ from typing import Callable
 
 DIR_MODE = 0o700
 FILE_MODE = 0o600
+# Lines the seen file may carry beyond twice its live ids before it is rewritten.
+COMPACT_SLACK = 256
 
 
 def write_private(path: Path, text: str) -> None:
@@ -21,7 +23,11 @@ def write_private(path: Path, text: str) -> None:
 
 
 class SeenEvents:
-    """Ids of requests already served, with their created_at, kept across restarts."""
+    """Ids of requests already served, with their created_at, kept across restarts.
+
+    Holds at most limit ids, newest last. The file is appended to and rewritten
+    once it carries twice the live ids, dropping those older than max_age.
+    """
 
     def __init__(self, path: Path | None = None, max_age: int = 300, limit: int = 4096,
                  now: Callable[[], float] = time.time):
@@ -30,14 +36,15 @@ class SeenEvents:
         self._limit = limit
         self._now = now
         self._ids: OrderedDict[str, int] = OrderedDict()
+        self._lines = 0
         if path is not None and path.exists():
-            cutoff = self._now() - max_age
             for line in path.read_text().splitlines():
                 event_id, _, created = line.strip().partition(' ')
-                if event_id and created.isdigit() and int(created) >= cutoff:
+                if event_id and created.isdigit():
                     self._ids[event_id] = int(created)
-            # Rewrite so the file does not grow forever across restarts.
-            write_private(path, ''.join(f'{k} {v}\n' for k, v in self._ids.items()))
+                    self._ids.move_to_end(event_id)
+            self._trim()
+            self._compact()
 
     def __contains__(self, event_id: str) -> bool:
         return event_id in self._ids
@@ -49,10 +56,31 @@ class SeenEvents:
         if event_id in self._ids:
             return
         self._ids[event_id] = created_at
+        self._trim()
+        self._expire()
+        if self._path is None:
+            return
+        if self._lines >= 2 * len(self._ids) + COMPACT_SLACK:
+            self._compact()
+            return
+        self._path.parent.mkdir(mode=DIR_MODE, parents=True, exist_ok=True)
+        fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, FILE_MODE)
+        with os.fdopen(fd, 'a') as f:
+            f.write(f'{event_id} {created_at}\n')
+        self._lines += 1
+
+    def _trim(self) -> None:
         while len(self._ids) > self._limit:
             self._ids.popitem(last=False)
-        if self._path is not None:
-            self._path.parent.mkdir(mode=DIR_MODE, parents=True, exist_ok=True)
-            fd = os.open(self._path, os.O_WRONLY | os.O_CREAT | os.O_APPEND, FILE_MODE)
-            with os.fdopen(fd, 'a') as f:
-                f.write(f'{event_id} {created_at}\n')
+
+    def _expire(self) -> None:
+        cutoff = self._now() - self._max_age
+        while self._ids and next(iter(self._ids.values())) < cutoff:
+            self._ids.popitem(last=False)
+
+    def _compact(self) -> None:
+        assert self._path is not None
+        cutoff = self._now() - self._max_age
+        self._ids = OrderedDict((k, v) for k, v in self._ids.items() if v >= cutoff)
+        write_private(self._path, ''.join(f'{k} {v}\n' for k, v in self._ids.items()))
+        self._lines = len(self._ids)
