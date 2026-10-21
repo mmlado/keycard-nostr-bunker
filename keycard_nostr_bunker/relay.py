@@ -2,7 +2,7 @@ import asyncio
 import json
 import logging
 import time
-from typing import Awaitable, Callable
+from typing import Awaitable, Callable, Protocol
 
 from websockets.asyncio.client import ClientConnection, connect
 from websockets.exceptions import ConnectionClosed
@@ -18,7 +18,21 @@ RESUBSCRIBE_MIN = 5.0
 RESUBSCRIBE_MAX = 300.0
 SUBSCRIPTION_ID = 'nip46'
 
-MessageHandler = Callable[[list, 'RelayConn'], Awaitable[None]]
+
+class Relay(Protocol):
+    """One relay connection, as the run loop uses it."""
+
+    url: str
+
+    def start(self) -> None: ...
+
+    async def stop(self) -> None: ...
+
+    async def send(self, message: list) -> bool: ...
+
+
+MessageHandler = Callable[[list, Relay], Awaitable[None]]
+RelayFactory = Callable[[str, str, MessageHandler], Relay]
 
 
 class RelayConn:

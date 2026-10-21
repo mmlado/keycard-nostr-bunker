@@ -19,7 +19,7 @@ from .card import CardError, KeycardSigner, list_readers
 from .config import Config, load_config
 from .nip46 import Bunker
 from .perms import Permissions
-from .relay import RelayConn
+from .relay import Relay, RelayConn, RelayFactory
 from .signer import Signer, SoftwareSigner
 from .state import SeenEvents
 
@@ -238,7 +238,9 @@ def open_card(cfg: Config) -> KeycardSigner:
     return signer
 
 
-async def run(cfg: Config, transport: SoftwareSigner, user: Signer) -> None:
+async def run(cfg: Config, transport: SoftwareSigner, user: Signer,
+              relay_factory: RelayFactory = RelayConn, stop: asyncio.Event | None = None) -> None:
+    """Serve requests until stop is set; without a stop event, until SIGINT or SIGTERM."""
     approver: Approver | None = None
     if cfg.connection.approve_clients:
         interactive = sys.stdin.isatty()
@@ -253,13 +255,14 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer) -> None:
     log.info('Admitted clients: %d', len(admission.clients()))
     seen = SeenEvents(state_file(cfg, 'seen'), max_age=nip46.MAX_AGE * 5)
     bunker = Bunker(transport, user, cfg.signing, admission, seen=seen)
-    conns: list[RelayConn] = []
-    stop = asyncio.Event()
-    loop = asyncio.get_running_loop()
-    for sig in (signal.SIGINT, signal.SIGTERM):
-        loop.add_signal_handler(sig, stop.set)
+    conns: list[Relay] = []
+    if stop is None:
+        stop = asyncio.Event()
+        loop = asyncio.get_running_loop()
+        for sig in (signal.SIGINT, signal.SIGTERM):
+            loop.add_signal_handler(sig, stop.set)
 
-    async def on_message(message: list, relay: RelayConn) -> None:
+    async def on_message(message: list, relay: Relay) -> None:
         match message:
             case ['EVENT', _, dict() as event]:
                 try:
@@ -281,7 +284,7 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer) -> None:
                 log.debug('Ignored relay message: %s', message[0])
 
     for url in cfg.relay.urls:
-        conn = RelayConn(url, transport.pubkey.hex(), on_message)
+        conn = relay_factory(url, transport.pubkey.hex(), on_message)
         conn.start()
         conns.append(conn)
 
