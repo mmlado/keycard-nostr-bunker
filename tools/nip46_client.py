@@ -9,13 +9,14 @@ Usage:
 import argparse
 import asyncio
 import json
+import os
 import sys
 import time
 from urllib.parse import parse_qs, urlparse
 
 from websockets.asyncio.client import connect
 
-from keycard_nostr_bunker import nip01, nip04, nip44
+from keycard_nostr_bunker import nip01, nip04, nip44, schnorr
 from keycard_nostr_bunker.signer import SoftwareSigner
 
 KIND = 24133
@@ -52,15 +53,16 @@ async def run(url: str, calls: list[tuple[str, list]], legacy: bool, key: str | 
     async with connect(relays[0]) as ws:
         await ws.send(json.dumps(['REQ', 'client', {'kinds': [KIND], '#p': [client.pubkey.hex()],
                                                     'since': int(time.time()) - 10}]))
-        for i, (method, params) in enumerate([('connect', [bunker, secret, perms])]
-                                             + calls):
-            request = {'id': f'r{i}', 'method': method, 'params': params}
+        for method, params in [('connect', [bunker, secret, perms])] + calls:
+            # A fresh id per request, so a reply left on the relay by an earlier run never matches.
+            request_id = os.urandom(8).hex()
+            request = {'id': request_id, 'method': method, 'params': params}
             event = nip01.finalize_event(
                 {'kind': KIND, 'tags': [['p', bunker]], 'content': encrypt(json.dumps(request))},
                 client.pubkey.hex(), client.sign)
             await ws.send(json.dumps(['EVENT', event]))
             print(f'-> {method}')
-            reply = await wait_reply(ws, bunker, f'r{i}', decrypt)
+            reply = await wait_reply(ws, bunker, request_id, decrypt)
             result = str(reply.get('result'))
             print(f'<- {method}: result={result[:80]!r} error={reply.get("error")!r}')
             if reply.get('error'):
@@ -77,10 +79,21 @@ async def wait_reply(ws, bunker: str, request_id: str, decrypt) -> dict:
         if remaining <= 0:
             raise TimeoutError(f'no reply within {REPLY_TIMEOUT}s')
         message = json.loads(await asyncio.wait_for(ws.recv(), remaining))
-        if message[0] == 'EVENT' and message[2].get('pubkey') == bunker:
-            reply = json.loads(decrypt(message[2]['content']))
+        event = message[2] if message[0] == 'EVENT' else {}
+        if event.get('pubkey') == bunker and signed_by(event, bunker):
+            reply = json.loads(decrypt(event['content']))
             if reply.get('id') == request_id:
                 return reply
+
+
+def signed_by(event: dict, pubkey: str) -> bool:
+    try:
+        expected = nip01.event_id(pubkey, event['created_at'], event['kind'], event['tags'],
+                                  event['content'])
+        return (expected.hex() == event['id']
+                and schnorr.verify(bytes.fromhex(pubkey), expected, bytes.fromhex(event['sig'])))
+    except (KeyError, ValueError, TypeError):
+        return False
 
 
 def main() -> int:
