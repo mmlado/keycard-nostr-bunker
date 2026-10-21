@@ -1,17 +1,17 @@
 """NIP-46 requested permissions: a comma-separated list of method or method:param."""
 
 import re
+from dataclasses import dataclass
 
 ALWAYS_ALLOWED = frozenset({'ping', 'get_public_key'})
-META_TOKEN = 'perms='
 _ITEM = re.compile(r'[a-z0-9_]+(:[0-9]+)?')
 
 
+@dataclass(frozen=True)
 class Permissions:
-    """What a client asked for at connect. A client that asked for nothing is unrestricted."""
+    """What a client asked for at connect. None means it asked for nothing and is unrestricted."""
 
-    def __init__(self, items: frozenset[str] | None):
-        self.items = items
+    items: frozenset[str] | None
 
     @classmethod
     def requested(cls, raw: object) -> 'Permissions':
@@ -21,16 +21,6 @@ class Permissions:
         # A non-empty request with no valid item still restricts the client.
         return cls(frozenset(item.strip() for item in raw.split(',')
                              if _ITEM.fullmatch(item.strip())))
-
-    @classmethod
-    def from_meta(cls, meta: str) -> 'Permissions':
-        for token in meta.split():
-            if token.startswith(META_TOKEN):
-                return cls(frozenset(item for item in token[len(META_TOKEN):].split(',') if item))
-        return cls(None)
-
-    def meta_token(self) -> str:
-        return '' if self.items is None else META_TOKEN + ','.join(sorted(self.items))
 
     def allows(self, method: str, kind: int | None = None) -> bool:
         if self.items is None or method in ALWAYS_ALLOWED:

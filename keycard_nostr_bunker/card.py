@@ -23,7 +23,7 @@ from smartcard.pcsc.PCSCExceptions import BaseSCardException
 from smartcard.System import readers as pcsc_readers
 
 from . import schnorr
-from .clients import write_private
+from .state import write_private
 from .config import KeycardConfig
 from .signer import SignerUnavailable
 

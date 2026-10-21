@@ -11,10 +11,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `connection.authorized_clients` admits known client pubkeys without the secret
 - The permissions a client requests in `connect` are stored with it and enforced, on top of the signing policy
+- `clients revoke` also drops a request waiting in `pending`, and `clients pending` shows the permissions asked for
 - `tools/nip46_client.py`, a minimal NIP-46 client for trying a bunker by hand
 
 ### Changed
 
+- `clients approve` admits only a client waiting in `pending`, with the permissions it requested; a key that never asked goes in `connection.authorized_clients`
 - `[approval] mode = "policy" | "always"` is now `[signing] policy = "allowed_kinds" | "all"`
 - Every request event is verified (signature, id, age) before it is served, and served ids are kept across restarts
 - `clients revoke` rotates the generated secret; `clients pending` shows when and through which relay a client asked
@@ -24,6 +26,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- A client approved after being pushed out of the pending list was admitted without the permissions it had requested
+- With `rotate_secret`, a waiting client that connected again got `invalid secret` instead of `pending approval`
+- Two clients presenting one URL at the same moment through different relays could both get in before the secret rotated
+- `clients revoke` on a key from `authorized_clients` left a record the key had got at runtime, which kept it admitted after its removal from the config
+- A refresh of the client list could show an empty list to a request on another thread, a second change within one timestamp tick could go unnoticed, and the bunker and the `clients` commands could overwrite each other's changes
 - A request whose body was not a JSON object, or whose reply exceeded the NIP-44 size limit, dropped the relay connection
 - A dead card session was not reopened until a physical reinsert; the per-peer ECDH cache outlived the card
 - The wrong-PIN guard did not survive a restart, and the card's identity was checked only after the PIN

@@ -1,9 +1,17 @@
 import pytest
 
+from keycard_nostr_bunker.admission import Admission, AdmissionError, defer
 from keycard_nostr_bunker.cli import build_parser, main
 from keycard_nostr_bunker.signer import SoftwareSigner
 
 PUBKEY = 'ab' * 32
+
+
+def ask(tmp_path, pubkey=PUBKEY, perms='', secret=None):
+    """Park a client the way the bunker does when approval is on."""
+    bunker = Admission(tmp_path, secret=secret or '', approver=defer)
+    with pytest.raises(AdmissionError, match='pending approval'):
+        bunker.connect(pubkey, secret or bunker.secret, perms, 'wss://relay.example')
 
 
 def parse(argv):
@@ -49,17 +57,29 @@ def test_clients_round_trip(tmp_path, capsys):
     c = config(tmp_path)
     assert main(['clients', 'list', *c]) == 0
     assert main(['clients', 'pending', *c]) == 0
+    ask(tmp_path, perms='sign_event:1')
+    assert main(['clients', 'pending', *c]) == 0
     assert main(['clients', 'approve', PUBKEY, *c]) == 0
     assert main(['clients', 'list', *c]) == 0
     assert main(['clients', 'revoke', PUBKEY, *c]) == 0
     assert main(['clients', 'revoke', PUBKEY, *c]) == 0
     out = capsys.readouterr().out.splitlines()
-    assert out[:3] == ['No admitted clients', 'No clients waiting for approval',
-                       f'Approved {PUBKEY}, which was not waiting for approval']
-    assert out[3].startswith(f'{PUBKEY}  20') and out[3].endswith('approved')
-    assert out[4] == f'Revoked {PUBKEY}'
-    assert out[5] == 'Secret rotated; the running bunker uses the new one at once.'
-    assert out[6] == f'{PUBKEY} was not an admitted client'
+    assert out[:2] == ['No admitted clients', 'No clients waiting for approval']
+    assert out[2].startswith(f'{PUBKEY}  20') and out[2].endswith(
+        'via wss://relay.example  permissions: sign_event:1')
+    assert out[3] == f'Approved {PUBKEY}, permissions: sign_event:1'
+    assert out[4].startswith(f'{PUBKEY}  20') and out[4].endswith('permissions: sign_event:1')
+    assert out[5] == f'Revoked {PUBKEY}'
+    assert out[6] == 'Secret rotated; the running bunker uses the new one at once.'
+    assert out[7] == f'{PUBKEY} was not an admitted client'
+
+
+def test_approve_refuses_a_client_that_never_asked(tmp_path, capsys):
+    c = config(tmp_path)
+    assert main(['clients', 'approve', PUBKEY, *c]) == 1
+    assert 'is not waiting for approval' in capsys.readouterr().out
+    assert main(['clients', 'list', *c]) == 0
+    assert capsys.readouterr().out.strip() == 'No admitted clients'
 
 
 def test_revoke_rotates_the_generated_secret(tmp_path, capsys):
@@ -68,16 +88,18 @@ def test_revoke_rotates_the_generated_secret(tmp_path, capsys):
     assert main(['url', *c]) == 0
     first = capsys.readouterr().out.strip()
     assert first.startswith('bunker://') and '&secret=' in first
-    main(['clients', 'approve', PUBKEY, *c])
+    ask(tmp_path)
     assert main(['clients', 'revoke', PUBKEY, *c]) == 0
     out = capsys.readouterr().out.splitlines()
+    assert out[0] == f'Dropped the pending request from {PUBKEY}'
     assert out[-1].startswith('bunker://') and out[-1] != first
     assert (tmp_path / 'secret').read_text().strip() in out[-1]
 
 
 def test_revoke_warns_when_the_secret_is_fixed(tmp_path, caplog):
     c = config(tmp_path, '[connection]\nsecret = "fixed"\n')
-    main(['clients', 'approve', PUBKEY, *c])
+    ask(tmp_path, secret='fixed')
+    assert main(['clients', 'approve', PUBKEY, *c]) == 0
     assert main(['clients', 'revoke', PUBKEY, *c]) == 0
     assert 'fixed in the config' in caplog.text
 
@@ -102,10 +124,13 @@ def test_bad_config_reported(tmp_path, caplog):
 def test_clients_from_the_config(tmp_path, capsys):
     other = 'cd' * 32
     c = config(tmp_path, f'[connection]\nauthorized_clients = ["{other}"]\n')
+    ask(tmp_path)
     main(['clients', 'approve', PUBKEY, *c])
     capsys.readouterr()
     assert main(['clients', 'list', *c]) == 0
     rows = capsys.readouterr().out.splitlines()
     assert rows[0] == f'{other}  from the config' and rows[1].startswith(PUBKEY)
+    assert main(['clients', 'approve', other, *c]) == 1
+    assert 'already admitted by connection.authorized_clients' in capsys.readouterr().out
     assert main(['clients', 'revoke', other, *c]) == 1
-    assert 'remove it from the config' in capsys.readouterr().out
+    assert 'remove it there and restart the bunker' in capsys.readouterr().out

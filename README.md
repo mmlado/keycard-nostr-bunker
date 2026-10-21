@@ -108,7 +108,8 @@ Everything the bunker remembers sits next to `signer.key`, mode 0600 in a 0700 d
 | `signer.key` | the bunker's transport key |
 | `secret` | the generated admission secret; `clients revoke` and `rotate_secret` replace it |
 | `clients` | admitted client pubkeys, with when and through which relay they came |
-| `pending` | clients waiting for approval |
+| `pending` | clients waiting for approval, with the permissions they asked for |
+| `admission.lock` | lets the bunker and the `clients` commands take turns changing `clients`, `pending` and `secret` |
 | `seen` | ids of recent requests, so a restart does not serve them twice |
 | `user.pubkey` | your public key and the card's key UID |
 | `pin.rejected` | present after a wrong PIN; removed by a successful one |
@@ -157,14 +158,14 @@ Paste the `bunker://` URL into the client's remote signer field. The URL carries
 
 Clients are admitted by the secret in the `bunker://` URL: the first `connect` with it enrolls the client's pubkey in `clients`, and every other request from a pubkey not in that file is refused with `unauthorized`. The URL is therefore a bearer credential: whoever has it can enroll one client. Treat it like a password and paste it only into apps you trust.
 
-`keycard-nostr-bunker clients revoke <pubkey>` removes a client and rotates the secret at the same time, since the revoked client still knows the old one; the running bunker picks both changes up at once. If the secret is fixed in the config, change it there. The same command is the answer to a leaked URL: revoke anything you do not recognise, and the old URL admits nobody.
+`keycard-nostr-bunker clients revoke <pubkey>` removes a client, drops its request from `pending` if it has one, and rotates the secret at the same time, since the client still knows the old one; the running bunker picks both changes up at once. If the secret is fixed in the config, change it there. The same command is the answer to a leaked URL: revoke anything you do not recognise, and the old URL admits nobody.
 
 Two options tighten admission:
 
 - `rotate_secret = true` replaces the secret as soon as a client presents it, whether or not you then approve that client, and prints the new URL. A URL you already used admits nobody else.
-- `approve_clients = true` makes the bunker ask you before admitting. In a terminal it prompts, with a minute to answer, and the answer is the first four characters of the pubkey shown, so a stray keystroke cannot approve anyone. As a service it parks the client in `pending`, logs the pubkey, and the client gets `pending approval` until you run `keycard-nostr-bunker clients approve <pubkey>` and it connects again. `clients pending` lists who is waiting, with the time and the relay. Approve only a client you have just set up yourself, right after pasting the URL, and refuse anything you did not expect. A hacker with the URL then still needs your approval, on your machine.
+- `approve_clients = true` makes the bunker ask you before admitting. In a terminal it prompts, with a minute to answer, and the answer is the first four characters of the pubkey shown, so a stray keystroke cannot approve anyone. As a service it parks the client in `pending`, logs the pubkey, and the client gets `pending approval` until you run `keycard-nostr-bunker clients approve <pubkey>` and it connects again. `clients pending` lists who is waiting, with the time, the relay and the permissions asked for. Only a client that asked can be approved: `clients approve` refuses a key that is not in `pending`, and admits a waiting one with exactly the permissions it requested. A waiting client that connects again gets `pending approval` without being asked for the secret again, which matters with `rotate_secret`, since the secret in its URL is already gone. `pending` keeps the 64 most recent requests; a client pushed out has to connect again with a current URL. Approve only a client you have just set up yourself, right after pasting the URL, and refuse anything you did not expect. A hacker with the URL then still needs your approval, on your machine.
 
-To admit a client whose pubkey you already know, without any URL, list it in `connection.authorized_clients`. Those clients skip the secret and the approval, show up in `clients list` as coming from the config, and are revoked by deleting them from the config.
+To admit a client whose pubkey you already know, without any URL, list it in `connection.authorized_clients`. Those clients skip the secret and the approval and show up in `clients list` as coming from the config. The list is read when the bunker starts. To revoke one, run `clients revoke <pubkey>`, which also removes any record the key got at runtime, then delete it from the config and restart the bunker.
 
 For a desktop, `approve_clients` with the prompt is the comfortable choice. For a headless service, `rotate_secret` keeps a leaked URL harmless and `clients approve` over SSH works when you need it.
 

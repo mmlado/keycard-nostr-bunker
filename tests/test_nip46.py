@@ -4,10 +4,11 @@ import time
 import pytest
 
 from keycard_nostr_bunker import nip01, nip04, nip44, schnorr
-from keycard_nostr_bunker.clients import ClientList, Secret, SeenEvents
+from keycard_nostr_bunker.admission import Admission, defer
 from keycard_nostr_bunker.config import SigningConfig
 from keycard_nostr_bunker.nip46 import KIND, MAX_AGE, Bunker
 from keycard_nostr_bunker.signer import SignerUnavailable, SoftwareSigner
+from keycard_nostr_bunker.state import SeenEvents
 
 TRANSPORT = SoftwareSigner((1).to_bytes(32, 'big'))
 USER = SoftwareSigner((3).to_bytes(32, 'big'))
@@ -52,11 +53,13 @@ def decrypt_reply(reply, legacy=False, client=CLIENT):
     return json.loads(plain)
 
 
-def bunker(policy='all', kinds=(), authorized=True, **kwargs):
-    b = Bunker(TRANSPORT, USER, SigningConfig(policy, list(kinds)), SECRET, **kwargs)
+def bunker(policy='all', kinds=(), authorized=True, user=USER, seen=None, **admission):
+    """A bunker whose client is admitted through the config unless authorized is False."""
+    admission.setdefault('secret', SECRET)
     if authorized:
-        b.clients.add(CLIENT.pubkey.hex())
-    return b
+        admission.setdefault('authorized', [CLIENT.pubkey.hex()])
+    return Bunker(TRANSPORT, user, SigningConfig(policy, list(kinds)), Admission(None, **admission),
+                  seen=seen)
 
 
 def call(method, params, b=None, legacy=False):
@@ -64,43 +67,55 @@ def call(method, params, b=None, legacy=False):
     return decrypt_reply(b.handle(request(method, params, legacy), 'wss://test'), legacy)
 
 
-def test_connect_with_secret_enrolls_client():
+def test_connect_with_the_secret_admits_the_client():
     b = bunker(authorized=False)
-    unsigned = {'kind': 1, 'content': '', 'created_at': 1}
-    assert call('sign_event', [unsigned], b)['error'] == 'unauthorized'
     assert call('ping', [], b)['error'] == 'unauthorized'
-    assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['result'] == 'ack'
-    assert CLIENT.pubkey.hex() in b.clients
-    stamp, source = b.clients.items()[0][1].split()
-    assert stamp.isdigit() and source == 'wss://test'
+    r = call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)
+    assert r['result'] == 'ack' and r['error'] is None
+    assert b.admission.admitted(CLIENT.pubkey.hex())
     assert call('ping', [], b)['result'] == 'pong'
 
 
-def test_connect_rejects_wrong_or_missing_secret():
+def test_connect_with_a_wrong_or_missing_secret_is_refused():
     b = bunker(authorized=False)
     assert call('connect', [TRANSPORT.pubkey.hex(), 'wrong'], b)['error'] == 'invalid secret'
     assert call('connect', [TRANSPORT.pubkey.hex()], b)['error'] == 'invalid secret'
     assert call('connect', [TRANSPORT.pubkey.hex(), None], b)['error'] == 'invalid secret'
-    assert len(b.clients) == 0
 
 
-def test_enrolled_client_reconnects_without_secret():
-    r = call('connect', [TRANSPORT.pubkey.hex()])
-    assert r['result'] == 'ack' and r['error'] is None
+def test_admitted_client_reconnects_without_the_secret():
+    assert call('connect', [TRANSPORT.pubkey.hex()])['result'] == 'ack'
 
 
-def test_clients_persist(tmp_path):
-    path = tmp_path / 'clients'
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, ClientList(path))
-    call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)
-    assert path.read_text().startswith(CLIENT.pubkey.hex() + ' ')
-    again = Bunker(TRANSPORT, USER, ALL, SECRET, ClientList(path))
-    assert call('ping', [], again)['result'] == 'pong'
+def test_connect_waiting_for_approval():
+    b = bunker(authorized=False, approver=defer)
+    assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['error'] == 'pending approval'
+    assert call('ping', [], b)['error'] == 'unauthorized'
 
 
-def test_secret_required():
-    with pytest.raises(ValueError):
-        Bunker(TRANSPORT, USER, ALL, '')
+def sign(b, kind):
+    return call('sign_event', [{'kind': kind, 'content': '', 'created_at': 1700000000}], b)
+
+
+def test_requested_permissions_reach_every_method():
+    b = bunker(authorized=False)
+    call('connect', [TRANSPORT.pubkey.hex(), SECRET, 'sign_event:1,nip44_encrypt'], b)
+    assert sign(b, 1)['error'] is None
+    assert sign(b, 3)['error'] == ('sign_event for kind 3 is not among the permissions '
+                                   'this client requested')
+    peer = THIRD_PARTY.pubkey.hex()
+    assert call('nip44_encrypt', [peer, 'x'], b)['error'] is None
+    assert call('nip44_decrypt', [peer, 'x'], b)['error'] == (
+        'nip44_decrypt is not among the permissions this client requested')
+    assert 'not among the permissions' in call('nip04_encrypt', [peer, 'x'], b)['error']
+    assert call('get_public_key', [], b)['result'] == USER.pubkey.hex()
+
+
+def test_signing_policy_applies_before_permissions():
+    b = bunker('allowed_kinds', [1, 7], authorized=False)
+    call('connect', [TRANSPORT.pubkey.hex(), SECRET, 'sign_event'], b)
+    assert sign(b, 7)['error'] is None
+    assert sign(b, 3)['error'] == 'kind 3 is not in signing.allowed_kinds'
 
 
 def test_get_public_key():
@@ -185,11 +200,9 @@ def test_duplicate_event_ignored():
 def test_seen_events_survive_a_restart(tmp_path):
     path = tmp_path / 'seen'
     event = request('ping', [])
-    first = Bunker(TRANSPORT, USER, ALL, SECRET, seen=SeenEvents(path))
-    first.clients.add(CLIENT.pubkey.hex())
+    first = bunker(seen=SeenEvents(path))
     assert first.handle(event) is not None
-    second = Bunker(TRANSPORT, USER, ALL, SECRET, seen=SeenEvents(path))
-    second.clients.add(CLIENT.pubkey.hex())
+    second = bunker(seen=SeenEvents(path))
     assert second.handle(event) is None
     assert second.handle(request('ping', [])) is not None
 
@@ -258,8 +271,7 @@ class CountingSigner(SoftwareSigner):
 
 def test_user_ecdh_is_not_cached_by_the_bunker():
     user = CountingSigner((3).to_bytes(32, 'big'))
-    b = Bunker(TRANSPORT, user, ALL, SECRET)
-    b.clients.add(CLIENT.pubkey.hex())
+    b = bunker(user=user)
     for _ in range(2):
         call('nip44_encrypt', [THIRD_PARTY.pubkey.hex(), 'x'], b)
     assert CountingSigner.calls == 2
@@ -276,180 +288,9 @@ class AbsentSigner:
 
 
 def test_signer_unavailable_is_reported_to_client():
-    b = Bunker(TRANSPORT, AbsentSigner(), ALL, SECRET)
-    b.clients.add(CLIENT.pubkey.hex())
+    b = bunker(user=AbsentSigner())
     assert call('get_public_key', [], b)['result'] == USER.pubkey.hex()
     r = call('sign_event', [{'kind': 1, 'content': '', 'created_at': 1700000000}], b)
     assert r == {'id': r['id'], 'result': '', 'error': 'Keycard not present'}
     r = call('nip44_encrypt', [THIRD_PARTY.pubkey.hex(), 'x'], b)
     assert r['error'] == 'Keycard not present'
-
-
-def test_on_secret_accepted_runs_once():
-    used = []
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, on_secret_accepted=used.append)
-    call('connect', [TRANSPORT.pubkey.hex(), 'wrong'], b)
-    call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)
-    call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)
-    assert used == [CLIENT.pubkey.hex()]
-
-
-def test_on_secret_accepted_fires_before_approval():
-    used = []
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True,
-               approver=lambda client, perms: False, on_secret_accepted=used.append)
-    assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['error'] == 'connection refused'
-    assert used == [CLIENT.pubkey.hex()]
-
-
-def test_rotated_secret_is_read_from_the_file(tmp_path):
-    secret = Secret(path=tmp_path / 'secret')
-    b = Bunker(TRANSPORT, USER, ALL, secret)
-    first = secret.current
-    assert call('connect', [TRANSPORT.pubkey.hex(), 'wrong'], b)['error'] == 'invalid secret'
-    assert call('connect', [TRANSPORT.pubkey.hex(), first], b)['result'] == 'ack'
-    Secret(path=tmp_path / 'secret').rotate()
-    other = SoftwareSigner((7).to_bytes(32, 'big'))
-    r = decrypt_reply(b.handle(request('connect', [TRANSPORT.pubkey.hex(), first], client=other)),
-                      client=other)
-    assert r['error'] == 'invalid secret'
-    new = (tmp_path / 'secret').read_text().strip()
-    r = decrypt_reply(b.handle(request('connect', [TRANSPORT.pubkey.hex(), new], client=other)),
-                      client=other)
-    assert r['result'] == 'ack'
-
-
-def test_approver_decides():
-    asked = []
-
-    def approver(client, perms):
-        asked.append(client)
-        return len(asked) > 1
-
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True, approver=approver)
-    assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['error'] == 'connection refused'
-    assert CLIENT.pubkey.hex() not in b.clients
-    assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['result'] == 'ack'
-    assert asked == [CLIENT.pubkey.hex()] * 2
-    assert CLIENT.pubkey.hex() in b.clients
-
-
-def test_approver_not_asked_without_secret():
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True,
-               approver=lambda client, perms: pytest.fail('asked'))
-    assert call('connect', [TRANSPORT.pubkey.hex(), 'wrong'], b)['error'] == 'invalid secret'
-
-
-def test_pending_until_approved_elsewhere():
-    pending = ClientList()
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True, pending=pending)
-    assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['error'] == 'pending approval'
-    assert CLIENT.pubkey.hex() in pending and CLIENT.pubkey.hex() not in b.clients
-    stamp, source = pending.items()[0][1].split()
-    assert stamp.isdigit() and source == 'wss://test'
-    assert call('ping', [], b)['error'] == 'unauthorized'
-    b.clients.add(CLIENT.pubkey.hex())
-    pending.remove(CLIENT.pubkey.hex())
-    assert call('connect', [TRANSPORT.pubkey.hex()], b)['result'] == 'ack'
-    assert call('ping', [], b)['result'] == 'pong'
-
-
-def test_busy_prompt_parks_the_client():
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True,
-               approver=lambda client, perms: pytest.fail('asked while busy'))
-    with b._prompt:
-        assert call('connect', [TRANSPORT.pubkey.hex(), SECRET], b)['error'] == 'pending approval'
-    assert CLIENT.pubkey.hex() in b.pending
-
-
-def test_preauthorized_client_needs_no_secret():
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, preauthorized=[CLIENT.pubkey.hex()])
-    assert call('ping', [], b)['result'] == 'pong'
-    assert call('connect', [TRANSPORT.pubkey.hex()], b)['result'] == 'ack'
-    assert len(b.clients) == 0
-    assert list(b._transport_shared) == [CLIENT.pubkey.hex()]
-
-
-def test_preauthorized_list_admits_only_its_keys():
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, preauthorized=[THIRD_PARTY.pubkey.hex()])
-    assert call('ping', [], b)['error'] == 'unauthorized'
-
-
-def connect_with(b, perms, client=CLIENT):
-    params = [TRANSPORT.pubkey.hex(), SECRET, perms]
-    return decrypt_reply(b.handle(request('connect', params, client=client), 'wss://test'),
-                         client=client)
-
-
-def sign(b, kind):
-    return call('sign_event', [{'kind': kind, 'content': '', 'created_at': 1700000000}], b)
-
-
-def test_requested_permissions_are_enforced():
-    b = bunker(authorized=False)
-    assert connect_with(b, 'sign_event:1,nip44_encrypt')['result'] == 'ack'
-    assert 'perms=nip44_encrypt,sign_event:1' in b.clients.get(CLIENT.pubkey.hex())
-    assert sign(b, 1)['error'] is None
-    assert sign(b, 3)['error'] == ('sign_event for kind 3 is not among the permissions '
-                                   'this client requested')
-    peer = THIRD_PARTY.pubkey.hex()
-    assert call('nip44_encrypt', [peer, 'x'], b)['error'] is None
-    assert call('nip44_decrypt', [peer, 'x'], b)['error'] == (
-        'nip44_decrypt is not among the permissions this client requested')
-    assert 'not among the permissions' in call('nip04_encrypt', [peer, 'x'], b)['error']
-    assert call('ping', [], b)['result'] == 'pong'
-    assert call('get_public_key', [], b)['result'] == USER.pubkey.hex()
-
-
-def test_sign_event_without_kind_allows_every_kind_the_policy_allows():
-    b = bunker('allowed_kinds', [1, 7], authorized=False)
-    connect_with(b, 'sign_event')
-    assert sign(b, 7)['error'] is None
-    assert sign(b, 3)['error'] == 'kind 3 is not in signing.allowed_kinds'
-
-
-def test_no_requested_permissions_means_unrestricted():
-    b = bunker(authorized=False)
-    assert connect_with(b, '')['result'] == 'ack'
-    assert 'perms=' not in b.clients.get(CLIENT.pubkey.hex())
-    assert sign(b, 3)['error'] is None
-
-
-def test_garbage_permissions_still_restrict():
-    b = bunker(authorized=False)
-    connect_with(b, '!!, sign event')
-    assert 'not among the permissions' in sign(b, 1)['error']
-    assert call('ping', [], b)['result'] == 'pong'
-
-
-def test_reconnect_cannot_widen_permissions():
-    b = bunker(authorized=False)
-    connect_with(b, 'sign_event:1')
-    assert connect_with(b, 'sign_event')['result'] == 'ack'
-    assert 'not among the permissions' in sign(b, 3)['error']
-
-
-def test_permissions_survive_a_restart(tmp_path):
-    path = tmp_path / 'clients'
-    first = Bunker(TRANSPORT, USER, ALL, SECRET, ClientList(path))
-    connect_with(first, 'sign_event:1')
-    second = Bunker(TRANSPORT, USER, ALL, SECRET, ClientList(path))
-    assert sign(second, 1)['error'] is None
-    assert 'not among the permissions' in sign(second, 3)['error']
-
-
-def test_approver_sees_the_requested_permissions():
-    seen = []
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True,
-               approver=lambda client, perms: seen.append(perms) or True)
-    connect_with(b, 'sign_event:1,nip44_encrypt')
-    assert seen == ['nip44_encrypt, sign_event:1']
-
-
-def test_pending_permissions_carry_over_to_approval():
-    from keycard_nostr_bunker.clients import approve
-    b = Bunker(TRANSPORT, USER, ALL, SECRET, approve=True)
-    assert connect_with(b, 'sign_event:1')['error'] == 'pending approval'
-    approve(CLIENT.pubkey.hex(), b.clients, b.pending)
-    assert sign(b, 1)['error'] is None
-    assert 'not among the permissions' in sign(b, 3)['error']

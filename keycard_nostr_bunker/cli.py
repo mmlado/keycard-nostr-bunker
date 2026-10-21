@@ -8,16 +8,20 @@ import signal
 import subprocess
 import sys
 import termios
+import threading
 import time
 from pathlib import Path
+from typing import Callable
 
 from . import __version__, nip46, service
+from .admission import CONFIG, Admission, AdmissionError, Approver, ClientRecord, defer
 from .card import CardError, KeycardSigner, list_readers
-from .clients import ClientList, Secret, SeenEvents, approve
 from .config import Config, load_config
 from .nip46 import Bunker
+from .perms import Permissions
 from .relay import RelayConn
 from .signer import Signer, SoftwareSigner
+from .state import SeenEvents
 
 log = logging.getLogger('keycard_nostr_bunker')
 
@@ -42,16 +46,23 @@ def bunker_url(pubkey_hex: str, relays: list[str], secret: str) -> str:
     return f'bunker://{pubkey_hex}?' + '&'.join(params)
 
 
+def state_dir(cfg: Config) -> Path:
+    return Path(cfg.signer.key_file).parent
+
+
 def state_file(cfg: Config, name: str) -> Path:
-    return Path(cfg.signer.key_file).with_name(name)
+    return state_dir(cfg) / name
 
 
-def load_secret(cfg: Config) -> Secret:
-    return Secret(cfg.connection.secret, state_file(cfg, 'secret'))
+def open_admission(cfg: Config, approver: Approver | None = None,
+                   on_rotate: Callable[[], None] | None = None) -> Admission:
+    return Admission(state_dir(cfg), secret=cfg.connection.secret,
+                     rotate=cfg.connection.rotate_secret, approver=approver,
+                     authorized=cfg.connection.authorized_clients, on_rotate=on_rotate)
 
 
-def current_url(cfg: Config, transport: SoftwareSigner, secret: Secret) -> str:
-    return bunker_url(transport.pubkey.hex(), cfg.relay.urls, secret.current)
+def current_url(cfg: Config, transport: SoftwareSigner, secret: str) -> str:
+    return bunker_url(transport.pubkey.hex(), cfg.relay.urls, secret)
 
 
 def show_url(url: str, reason: str) -> None:
@@ -62,21 +73,36 @@ def show_url(url: str, reason: str) -> None:
         log.info('%s; run "keycard-nostr-bunker url" to show the bunker URL', reason)
 
 
-def terminal_approver(client: str, perms: str) -> bool:
-    code = client[:4]
-    fd = sys.stdin.fileno()
-    try:
-        termios.tcflush(fd, termios.TCIFLUSH)
-    except (termios.error, OSError):
-        pass
-    print(f'\nClient {client} asks to connect.\nIt requests: {perms}\n'
-          f'Type {code} to approve, anything else to refuse: ', end='', flush=True)
-    ready, _, _ = select.select([sys.stdin], [], [], APPROVAL_TIMEOUT)
-    if not ready:
-        print('\nNo answer, refused', flush=True)
-        return False
-    answer = os.read(fd, 1024).decode(errors='replace').partition('\n')[0].strip()
-    return answer == code
+class TerminalApprover:
+    """Asks at the terminal. A client that arrives while a prompt is open stays pending."""
+
+    def __init__(self, timeout: float = APPROVAL_TIMEOUT):
+        self._timeout = timeout
+        self._busy = threading.Lock()
+
+    def __call__(self, client: str, perms: Permissions) -> bool | None:
+        if not self._busy.acquire(blocking=False):
+            return None
+        try:
+            return self._ask(client, perms)
+        finally:
+            self._busy.release()
+
+    def _ask(self, client: str, perms: Permissions) -> bool:
+        code = client[:4]
+        fd = sys.stdin.fileno()
+        try:
+            termios.tcflush(fd, termios.TCIFLUSH)
+        except (termios.error, OSError):
+            pass
+        print(f'\nClient {client} asks to connect.\nIt requests: {perms.describe()}\n'
+              f'Type {code} to approve, anything else to refuse: ', end='', flush=True)
+        ready, _, _ = select.select([sys.stdin], [], [], self._timeout)
+        if not ready:
+            print('\nNo answer, refused', flush=True)
+            return False
+        answer = os.read(fd, 1024).decode(errors='replace').partition('\n')[0].strip()
+        return answer == code
 
 
 def pubkey_arg(value: str) -> str:
@@ -132,56 +158,58 @@ def uninstall_service() -> int:
     return 0
 
 
-def _when(meta: str) -> str:
-    stamp, _, rest = meta.partition(' ')
-    if stamp.isdigit():
-        when = time.strftime('%Y-%m-%d %H:%M', time.localtime(int(stamp)))
-        return f'{when}  {rest}' if rest else when
-    return meta
+def _row(record: ClientRecord) -> str:
+    if record.via == CONFIG:
+        return f'{record.pubkey}  from the config'
+    when = (time.strftime('%Y-%m-%d %H:%M', time.localtime(record.since))
+            if record.since is not None else 'unknown time')
+    via = f'  via {record.via}' if record.via else ''
+    return f'{record.pubkey}  {when}{via}  permissions: {record.perms.describe()}'
 
 
 def manage_clients(cfg: Config, action: str, pubkey: str | None) -> int:
-    clients = ClientList(state_file(cfg, 'clients'))
-    pending = ClientList(state_file(cfg, 'pending'), limit=nip46.PENDING_LIMIT)
+    admission = open_admission(cfg)
     match action:
         case 'list':
-            rows = [f'{key}  from the config' for key in cfg.connection.authorized_clients]
-            rows += [f'{key}  {_when(meta)}'.rstrip() for key, meta in clients.items()
-                     if key not in cfg.connection.authorized_clients]
+            rows = [_row(record) for record in admission.clients()]
             print('\n'.join(rows) if rows else 'No admitted clients')
         case 'pending':
-            rows = [f'{key}  {_when(meta)}'.rstrip() for key, meta in pending.items()]
+            rows = [_row(record) for record in admission.pending()]
             print('\n'.join(rows) if rows else 'No clients waiting for approval')
         case 'approve':
             assert pubkey
-            was_pending = approve(pubkey, clients, pending)
-            print(f'Approved {pubkey}' if was_pending
-                  else f'Approved {pubkey}, which was not waiting for approval')
+            try:
+                record = admission.approve(pubkey)
+            except AdmissionError as e:
+                print(e)
+                return 1
+            print(f'Approved {pubkey}, permissions: {record.perms.describe()}')
         case 'revoke':
             assert pubkey
-            if pubkey in cfg.connection.authorized_clients:
-                print(f'{pubkey} is in connection.authorized_clients; remove it from the config')
-                return 1
-            if not clients.remove(pubkey):
-                print(f'{pubkey} was not an admitted client')
-                return 0
-            print(f'Revoked {pubkey}')
-            return rotate_after_revoke(cfg)
+            return revoke(cfg, admission, pubkey)
     return 0
 
 
-def rotate_after_revoke(cfg: Config) -> int:
-    """A revoked client still knows the secret, so it must change too."""
-    secret = load_secret(cfg)
-    if not secret.rotatable:
+def revoke(cfg: Config, admission: Admission, pubkey: str) -> int:
+    result = admission.revoke(pubkey)
+    if result.removed:
+        print(f'Revoked {pubkey}')
+    if result.dropped_pending:
+        print(f'Dropped the pending request from {pubkey}')
+    if result.in_config:
+        print(f'{pubkey} is in connection.authorized_clients; remove it there and restart '
+              'the bunker')
+    if not (result.removed or result.dropped_pending or result.in_config):
+        print(f'{pubkey} was not an admitted client')
+    if result.secret_fixed:
         log.warning('connection.secret is fixed in the config; change it there, '
                     'or the revoked client can connect again')
-        return 0
-    secret.rotate()
-    print('Secret rotated; the running bunker uses the new one at once.')
-    if Path(cfg.signer.key_file).exists():
-        return show_url_command(cfg)
-    return 0
+    if result.rotated:
+        print('Secret rotated; the running bunker uses the new one at once.')
+        key_file = Path(cfg.signer.key_file)
+        if key_file.exists():
+            print(current_url(cfg, SoftwareSigner.load(key_file), admission.secret))
+    return 1 if result.in_config else 0
 
 
 def show_url_command(cfg: Config) -> int:
@@ -189,7 +217,7 @@ def show_url_command(cfg: Config) -> int:
     if not key_file.exists():
         log.error('%s does not exist yet; run the bunker once first', key_file)
         return 1
-    print(current_url(cfg, SoftwareSigner.load(key_file), load_secret(cfg)))
+    print(current_url(cfg, SoftwareSigner.load(key_file), open_admission(cfg).secret))
     return 0
 
 
@@ -204,27 +232,20 @@ def open_card(cfg: Config) -> KeycardSigner:
 
 
 async def run(cfg: Config, transport: SoftwareSigner, user: Signer) -> None:
-    secret = load_secret(cfg)
-    clients = ClientList(state_file(cfg, 'clients'))
-    pending = ClientList(state_file(cfg, 'pending'), limit=nip46.PENDING_LIMIT)
-    seen = SeenEvents(state_file(cfg, 'seen'), max_age=nip46.MAX_AGE * 5)
-    log.info('Admitted clients: %d', len(clients))
-    admission = cfg.connection
-    interactive = admission.approve_clients and sys.stdin.isatty()
-    if admission.approve_clients:
+    approver: Approver | None = None
+    if cfg.connection.approve_clients:
+        interactive = sys.stdin.isatty()
+        approver = TerminalApprover() if interactive else defer
         how = 'a prompt here' if interactive else 'keycard-nostr-bunker clients approve <pubkey>'
         log.info('New clients need approval: %s', how)
 
-    def on_secret_accepted(client: str) -> None:
-        if admission.rotate_secret:
-            secret.rotate()
-            show_url(current_url(cfg, transport, secret), 'Secret rotated')
+    def rotated() -> None:
+        show_url(current_url(cfg, transport, admission.secret), 'Secret rotated')
 
-    bunker = Bunker(transport, user, cfg.signing, secret, clients,
-                    approve=admission.approve_clients,
-                    approver=terminal_approver if interactive else None,
-                    pending=pending, seen=seen, on_secret_accepted=on_secret_accepted,
-                    preauthorized=admission.authorized_clients)
+    admission = open_admission(cfg, approver, on_rotate=rotated)
+    log.info('Admitted clients: %d', len(admission.clients()))
+    seen = SeenEvents(state_file(cfg, 'seen'), max_age=nip46.MAX_AGE * 5)
+    bunker = Bunker(transport, user, cfg.signing, admission, seen=seen)
     conns: list[RelayConn] = []
     stop = asyncio.Event()
     loop = asyncio.get_running_loop()
@@ -259,7 +280,7 @@ async def run(cfg: Config, transport: SoftwareSigner, user: Signer) -> None:
         conn.start()
         conns.append(conn)
 
-    show_url(current_url(cfg, transport, secret), 'Bunker ready')
+    show_url(current_url(cfg, transport, admission.secret), 'Bunker ready')
     try:
         await stop.wait()
     finally:

@@ -1,25 +1,23 @@
 """NIP-46 request dispatcher."""
 
-import hmac
 import json
 import logging
 import re
 import threading
 import time
-from typing import Any, Callable, Iterable
+from typing import Any, Callable
 
 from . import nip01, nip04, nip44, schnorr
-from .clients import ClientList, Secret, SeenEvents
+from .admission import Admission, AdmissionError
 from .config import SigningConfig
-from .perms import Permissions
 from .signer import Signer, SignerUnavailable
+from .state import SeenEvents
 
 log = logging.getLogger(__name__)
 
 KIND = 24133
 # A request older than this, or further ahead of our clock, is refused.
 MAX_AGE = 60
-PENDING_LIMIT = 64
 METHODS = frozenset({'get_public_key', 'ping', 'sign_event', 'nip44_encrypt', 'nip44_decrypt',
                      'nip04_encrypt', 'nip04_decrypt'})
 
@@ -33,39 +31,23 @@ class RequestError(Exception):
 class Bunker:
     """Verifies and decrypts kind:24133 requests, serves them, signs the replies.
 
-    transport: the bunker key clients address; user: the identity that signs.
-    A client is admitted by `connect` with the secret and remembered in clients;
-    every other method is refused for anyone else. With approve set, the secret
-    only gets the client asked about: the approver decides on the spot, or,
-    without one, the client is parked in pending until approved elsewhere.
-    on_secret_accepted runs as soon as a client presents the right secret,
-    admitted or not, so the secret can be rotated.
+    transport: the bunker key clients address; user: the identity that signs;
+    admission: who may connect and what each client may ask for.
 
     handle may run on several threads at once; the user signer serializes
-    its own card access.
+    its own card access and admission its own state.
     """
 
     def __init__(self, transport: Signer, user: Signer, signing: SigningConfig,
-                 secret: str | Secret, clients: ClientList | None = None,
-                 approve: bool = False, approver: Callable[[str, str], bool] | None = None,
-                 pending: ClientList | None = None, seen: SeenEvents | None = None,
-                 on_secret_accepted: Callable[[str], None] | None = None,
-                 preauthorized: Iterable[str] = (),
+                 admission: Admission, seen: SeenEvents | None = None,
                  now: Callable[[], float] = time.time):
         self.transport = transport
         self.user = user
         self.signing = signing
-        self.secret = Secret(secret) if isinstance(secret, str) else secret
-        self.clients = clients if clients is not None else ClientList()
-        self.approve = approve
-        self.approver = approver
-        self.pending = pending if pending is not None else ClientList(limit=PENDING_LIMIT)
+        self.admission = admission
         self.seen = seen if seen is not None else SeenEvents(max_age=MAX_AGE)
-        self.on_secret_accepted = on_secret_accepted
-        self.preauthorized = frozenset(preauthorized)
         self._now = now
         self._lock = threading.Lock()
-        self._prompt = threading.Lock()
         self._transport_shared: dict[str, bytes] = {}
 
     def handle(self, event: dict[str, Any], source: str = '') -> dict[str, Any] | None:
@@ -106,7 +88,7 @@ class Bunker:
         error = None
         try:
             result = self._dispatch(method, params, client, source)
-        except (RequestError, SignerUnavailable) as e:
+        except (RequestError, AdmissionError, SignerUnavailable) as e:
             result, error = '', str(e)
         except Exception as e:
             log.exception('NIP-46 %s failed', method)
@@ -144,22 +126,21 @@ class Bunker:
 
     def _dispatch(self, method: str, params: list, client: str, source: str) -> str:
         if method == 'connect':
-            return self._connect(params, client, source)
-        if not self._admitted(client):
+            secret = str(params[1]) if len(params) > 1 and params[1] is not None else ''
+            requested = params[2] if len(params) > 2 else None
+            return self.admission.connect(client, secret, requested, source)
+        if not self.admission.admitted(client):
             log.info('NIP-46 %s from unauthorized %s', method, client)
-            raise RequestError('unauthorized')
-        perms = self._permissions(client)
-        if method in METHODS and method != 'sign_event' and not perms.allows(method):
-            log.info('NIP-46 %s from %s refused: not among its requested permissions',
-                     method, client)
-            raise RequestError(f'{method} is not among the permissions this client requested')
+            raise AdmissionError('unauthorized')
+        if method == 'sign_event':
+            return self._sign_event(params, client)
+        if method in METHODS:
+            self.admission.require(client, method)
         match method:
             case 'get_public_key':
                 return self.user.pubkey.hex()
             case 'ping':
                 return 'pong'
-            case 'sign_event':
-                return self._sign_event(params, perms)
             case 'nip44_encrypt':
                 return nip44.encrypt(_param(params, 1), self._user_key(_param(params, 0)))
             case 'nip44_decrypt':
@@ -171,51 +152,7 @@ class Bunker:
             case _:
                 raise RequestError(f'unsupported method: {method}')
 
-    def _admitted(self, client: str) -> bool:
-        return client in self.preauthorized or client in self.clients
-
-    def _permissions(self, client: str) -> Permissions:
-        if client in self.preauthorized:
-            return Permissions(None)
-        return Permissions.from_meta(self.clients.get(client) or '')
-
-    def _connect(self, params: list, client: str, source: str) -> str:
-        if self._admitted(client):
-            return 'ack'
-        offered = str(params[1]) if len(params) > 1 and params[1] is not None else ''
-        if not hmac.compare_digest(offered.encode(), self.secret.current.encode()):
-            log.warning('NIP-46 connect from %s with a wrong secret', client)
-            raise RequestError('invalid secret')
-        if self.on_secret_accepted is not None:
-            self.on_secret_accepted(client)
-        perms = Permissions.requested(params[2] if len(params) > 2 else None)
-        meta = ' '.join(filter(None, [str(int(self._now())), source, perms.meta_token()]))
-        if self.approve:
-            if self.approver is None or not self._prompt.acquire(blocking=False):
-                self._park(client, meta)
-                raise RequestError('pending approval')
-            try:
-                approved = self.approver(client, perms.describe())
-            finally:
-                self._prompt.release()
-            if not approved:
-                log.warning('NIP-46 client %s refused', client)
-                raise RequestError('connection refused')
-        with self._lock:
-            self.clients.add(client, meta)
-            self.pending.remove(client)
-        log.info('NIP-46 admitted client %s, permissions: %s', client, perms.describe())
-        return 'ack'
-
-    def _park(self, client: str, meta: str) -> None:
-        with self._lock:
-            if client in self.pending:
-                return
-            self.pending.add(client, meta)
-        log.warning('NIP-46 client %s waits for approval: keycard-nostr-bunker clients approve %s',
-                    client, client)
-
-    def _sign_event(self, params: list, perms: Permissions) -> str:
+    def _sign_event(self, params: list, client: str) -> str:
         raw = _param(params, 0)
         unsigned = json.loads(raw) if isinstance(raw, str) else raw
         if not isinstance(unsigned, dict):
@@ -224,10 +161,7 @@ class Bunker:
         if not self._approved(kind):
             log.info('Rejected sign_event: kind %d is not in signing.allowed_kinds', kind)
             raise RequestError(f'kind {kind} is not in signing.allowed_kinds')
-        if not perms.allows('sign_event', kind):
-            log.info('Rejected sign_event: kind %d is not among the requested permissions', kind)
-            raise RequestError(f'sign_event for kind {kind} is not among the permissions '
-                               'this client requested')
+        self.admission.require(client, 'sign_event', kind)
         signed = nip01.finalize_event(unsigned, self.user.pubkey.hex(), self.user.sign)
         return json.dumps(signed, separators=(',', ':'), ensure_ascii=False)
 
@@ -247,7 +181,7 @@ class Bunker:
         if shared is None:
             shared = self.transport.ecdh(bytes.fromhex(client))
             # Only admitted clients are cached, so the cache stays bounded.
-            if self._admitted(client):
+            if self.admission.admitted(client):
                 self._transport_shared[client] = shared
         return shared
 

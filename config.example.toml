@@ -44,5 +44,6 @@ rotate_secret = false
 # otherwise `keycard-nostr-bunker clients approve <pubkey>` while the client waits.
 approve_clients = false
 # Client pubkeys, 64 hex characters, admitted without the secret: for example
-# an app whose key you already know. Remove one here to revoke it.
+# an app whose key you already know. Read at start; to revoke one, run
+# `keycard-nostr-bunker clients revoke <pubkey>`, remove it here and restart.
 authorized_clients = []
