@@ -14,7 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NIP-46 bunker with `connect`, `get_public_key`, `sign_event`, `ping`, `nip44_encrypt`, `nip44_decrypt`, `nip04_encrypt` and `nip04_decrypt`; NIP-44 for the transport, NIP-04 for older clients
 - Keycard applet 4.x: BIP-340 Schnorr signing and ECDH on the card over Secure Channel V2, with the card's identity certificate checked against trusted Keycard CAs; older applets are refused
 - Runs without the card and picks it up when it is inserted; reopens a session another program disturbed; refuses a card whose key UID is not the remembered one before any PIN is sent; a wrong PIN is tried once and remembered across restarts, and the last PIN attempt is never spent
-- Clients are admitted by `connect` with the secret from the bunker URL, generated when the config has none; optional rotation of the secret after each use, and optional approval at a terminal prompt or with `clients approve`
+- Clients are admitted by `connect` with the secret from the bunker URL, generated when the config has none and replaced after each use, so one URL admits one client (`rotate_secret = false` to keep it); optional approval at a terminal prompt or with `clients approve`
 - `clients list`, `pending`, `approve` and `revoke`; revoking rotates the secret, and approval admits only a client that asked
 - `connection.authorized_clients` for client pubkeys admitted without the secret
 - The permissions a client requests in `connect` are stored and shown in the approval prompt and the client lists; what gets signed is decided by the signing policy, `[signing] policy = "allowed_kinds" | "all"`

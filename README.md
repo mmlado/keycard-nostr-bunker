@@ -93,7 +93,7 @@ Copy `config.example.toml` to `~/.config/keycard-nostr-bunker/config.toml` and e
 | `signing` | `policy` | `allowed_kinds` signs only the listed kinds; `all` signs everything |
 | | `allowed_kinds` | Event kinds to sign; the example config lists the usual ones |
 | `connection` | `secret` | Secret in the bunker URL that admits a client; generated if empty |
-| | `rotate_secret` | Replace the secret once a client has used it, so a URL serves one client |
+| | `rotate_secret` | Replace the secret once a client has used it, so a URL serves one client; on unless `secret` is set |
 | | `approve_clients` | Ask before admitting a client |
 | | `authorized_clients` | Client pubkeys admitted without the secret |
 
@@ -156,18 +156,17 @@ Paste the `bunker://` URL into the client's remote signer field. The URL carries
 
 ### Admitting clients
 
-Clients are admitted by the secret in the `bunker://` URL: the first `connect` with it enrolls the client's pubkey in `clients`, and every other request from a pubkey not in that file is refused with `unauthorized`. The URL is therefore a bearer credential: whoever has it can enroll one client. Treat it like a password and paste it only into apps you trust.
+Clients are admitted by the secret in the `bunker://` URL: the first `connect` with it enrolls the client's pubkey in `clients`, and every other request from a pubkey not in that file is refused with `unauthorized`. The URL is therefore a bearer credential: whoever has it can enroll a client. Treat it like a password and paste it only into apps you trust.
+
+The secret rotates by default: as soon as a client presents it, the bunker replaces it, whether or not you then approve that client, and prints the new URL in a terminal. A URL you already used admits nobody else, and if someone else uses yours first, your client gets `invalid secret` and you know. Admitted clients reconnect without the secret, so rotation only matters when you add one: run `keycard-nostr-bunker url` for the current URL each time. `rotate_secret = false` keeps one URL for any number of clients, until a `clients revoke`. A secret fixed in the config with `connection.secret` does not rotate.
 
 `keycard-nostr-bunker clients revoke <pubkey>` removes a client, drops its request from `pending` if it has one, and rotates the secret at the same time, since the client still knows the old one; the running bunker picks both changes up at once. If the secret is fixed in the config, change it there. The same command is the answer to a leaked URL: revoke anything you do not recognise, and the old URL admits nobody.
 
-Two options tighten admission:
-
-- `rotate_secret = true` replaces the secret as soon as a client presents it, whether or not you then approve that client, and prints the new URL. A URL you already used admits nobody else.
-- `approve_clients = true` makes the bunker ask you before admitting. In a terminal it prompts, with a minute to answer, and the answer is the first four characters of the pubkey shown, so a stray keystroke cannot approve anyone. As a service it parks the client in `pending`, logs the pubkey, and the client gets `pending approval` until you run `keycard-nostr-bunker clients approve <pubkey>` and it connects again. `clients pending` lists who is waiting, with the time, the relay and the permissions asked for. Only a client that asked can be approved: `clients approve` refuses a key that is not in `pending`. A waiting client that connects again gets `pending approval` without being asked for the secret again, which matters with `rotate_secret`, since the secret in its URL is already gone. `pending` keeps the 64 most recent requests; a client pushed out has to connect again with a current URL. Approve only a client you have just set up yourself, right after pasting the URL, and refuse anything you did not expect. A hacker with the URL then still needs your approval, on your machine.
+`approve_clients = true` tightens admission further. It makes the bunker ask you before admitting. In a terminal it prompts, with a minute to answer, and the answer is the first four characters of the pubkey shown, so a stray keystroke cannot approve anyone. As a service it parks the client in `pending`, logs the pubkey, and the client gets `pending approval` until you run `keycard-nostr-bunker clients approve <pubkey>` and it connects again. `clients pending` lists who is waiting, with the time, the relay and the permissions asked for. Only a client that asked can be approved: `clients approve` refuses a key that is not in `pending`. A waiting client that connects again gets `pending approval` without being asked for the secret again, which matters with `rotate_secret`, since the secret in its URL is already gone. `pending` keeps the 64 most recent requests; a client pushed out has to connect again with a current URL. Approve only a client you have just set up yourself, right after pasting the URL, and refuse anything you did not expect. A hacker with the URL then still needs your approval, on your machine.
 
 To admit a client whose pubkey you already know, without any URL, list it in `connection.authorized_clients`. Those clients skip the secret and the approval and show up in `clients list` as coming from the config. The list is read when the bunker starts. To revoke one, run `clients revoke <pubkey>`, which also removes any record the key got at runtime, then delete it from the config and restart the bunker.
 
-For a desktop, `approve_clients` with the prompt is the comfortable choice. For a headless service, `rotate_secret` keeps a leaked URL harmless and `clients approve` over SSH works when you need it.
+For a desktop, `approve_clients` with the prompt is the comfortable choice. For a headless service, the rotating secret keeps a used URL harmless and `clients approve` over SSH works when you need it.
 
 A client can also say what it needs. NIP-46 lets `connect` carry a permission list such as `sign_event:1,nip44_encrypt`. The bunker stores it with the client and shows it in the approval prompt, `clients pending` and `clients list`, but does not hold the client to it: clients list only what they want pre-approved and expect the rest to work too. Coracle, for one, asks for no `sign_event:1` and still posts notes. What the card signs is decided by `[signing]` alone, the same for every admitted client.
 

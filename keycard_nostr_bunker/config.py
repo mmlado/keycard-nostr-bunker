@@ -44,7 +44,7 @@ class SigningConfig:
 @dataclass
 class ConnectionConfig:
     secret: str = ''
-    rotate_secret: bool = False
+    rotate_secret: bool = True
     approve_clients: bool = False
     authorized_clients: list[str] = field(default_factory=list)
 
@@ -162,6 +162,7 @@ def _is_hex(value: str) -> bool:
 def load_config(path: str | Path) -> Config:
     cfg = Config()
     path = Path(path)
+    data: dict[str, Any] = {}
     if path.exists():
         data = tomllib.loads(path.read_text())
         sections = {f.name for f in fields(cfg)}
@@ -169,6 +170,9 @@ def load_config(path: str | Path) -> Config:
             if name not in sections:
                 raise ValueError(f'unknown section [{name}]')
             _apply(name, getattr(cfg, name), values)
+    # Rotation is the default, but a secret fixed in the config cannot rotate.
+    if cfg.connection.secret and 'rotate_secret' not in data.get('connection', {}):
+        cfg.connection.rotate_secret = False
     key_file = Path(cfg.signer.key_file).expanduser()
     if not key_file.is_absolute():
         key_file = path.resolve().parent / key_file

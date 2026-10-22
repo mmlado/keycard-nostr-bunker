@@ -39,8 +39,10 @@ allowed_kinds = [0, 1, 3, 5, 6, 7, 10002]
 # Empty: generated on first run and stored next to the signer key.
 secret = ""
 # Replace the secret as soon as a client has used it, so a bunker URL serves
-# one client and is then useless to whoever finds it. Needs an empty secret above.
-rotate_secret = false
+# one client and is then useless to whoever finds it; run `keycard-nostr-bunker
+# url` for each new client. Off when the secret above is set. With false, one
+# URL admits any number of clients until a `clients revoke`.
+rotate_secret = true
 # Ask before admitting a client: a prompt when running in a terminal,
 # otherwise `keycard-nostr-bunker clients approve <pubkey>` while the client waits.
 approve_clients = false

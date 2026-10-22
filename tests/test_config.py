@@ -66,6 +66,15 @@ def test_rotate_needs_generated_secret(tmp_path):
     assert cfg.connection.rotate_secret
 
 
+@pytest.mark.parametrize('text,rotates', [
+    ('', True),
+    ('[connection]\nsecret = "fixed"\n', False),
+    ('[connection]\nrotate_secret = false\n', False),
+])
+def test_rotation_is_the_default_unless_the_secret_is_fixed(tmp_path, text, rotates):
+    assert load_config(write(tmp_path, text)).connection.rotate_secret is rotates
+
+
 def test_relay_urls_are_normalized_and_deduplicated(tmp_path):
     cfg = load_config(write(tmp_path, '[relay]\nurls = ["wss://Nos.lol/", " wss://nos.lol", '
                                       '"wss://relay.example:443", "ws://local:8080/path/", '
