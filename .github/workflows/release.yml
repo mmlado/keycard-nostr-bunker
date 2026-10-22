@@ -15,7 +15,6 @@ jobs:
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.check.outputs.version }}
-      prerelease: ${{ steps.check.outputs.prerelease }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -57,28 +56,8 @@ jobs:
           name: dist
           path: dist/
 
-  testpypi:
-    needs: [check, build]
-    if: needs.check.outputs.prerelease == 'true'
-    runs-on: ubuntu-24.04
-    environment:
-      name: testpypi
-      url: https://test.pypi.org/project/keycard-nostr-bunker/${{ needs.check.outputs.version }}/
-    permissions:
-      id-token: write
-    steps:
-      - uses: actions/download-artifact@v8
-        with:
-          name: dist
-          path: dist/
-
-      - uses: pypa/gh-action-pypi-publish@release/v1
-        with:
-          repository-url: https://test.pypi.org/legacy/
-
   pypi:
     needs: [check, build]
-    if: needs.check.outputs.prerelease == 'false'
     runs-on: ubuntu-24.04
     environment:
       name: pypi

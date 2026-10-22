@@ -40,6 +40,8 @@ def check(tag: str) -> list[str]:
         errors.append(f'Tag {tag} does not match __version__ {package_version}')
     if not changelog_section(version):
         errors.append(f'CHANGELOG.md has no [{version}] section')
+    if PRERELEASE.search(version):
+        errors.append(f'{tag} is a pre-release; only final versions are published')
     return errors
 
 
@@ -56,9 +58,7 @@ def main() -> int:
             print(error, file=sys.stderr)
         if errors:
             return 1
-        version = args.tag.removeprefix('v')
-        print(f'version={version}')
-        print(f'prerelease={str(PRERELEASE.search(version) is not None).lower()}')
+        print(f'version={args.tag.removeprefix("v")}')
         return 0
 
     notes = changelog_section(args.version)
