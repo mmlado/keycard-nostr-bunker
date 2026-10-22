@@ -204,6 +204,22 @@ keycard-nostr-bunker service uninstall
 
 `pcscd` must be running. The bunker stops cleanly on SIGTERM.
 
+**Starting before anyone logs in.** With linger the service starts at boot, but on Fedora, Debian and Ubuntu pcscd serves only programs in an active login session: its polkit policy (`org.debian.pcsc-lite.access_pcsc` and `access_card`) refuses the rest. Until someone logs in, the bunker logs `Access denied` and exits, and systemd starts it again every 5 seconds. A polkit rule lets the service's user reach the card without a session. Run this as that user:
+
+```sh
+sudo tee /etc/polkit-1/rules.d/50-keycard-nostr-bunker.rules >/dev/null <<EOF
+polkit.addRule(function(action, subject) {
+    if ((action.id == "org.debian.pcsc-lite.access_pcsc" ||
+         action.id == "org.debian.pcsc-lite.access_card") &&
+        subject.user == "$USER") {
+        return polkit.Result.YES;
+    }
+});
+EOF
+```
+
+polkit reads the rule straight away. It lets every process of that user use the card readers without a login session, over SSH for example; signing still needs the card's PIN.
+
 ## Supported NIP-46 methods
 
 | Method | Card operation |
