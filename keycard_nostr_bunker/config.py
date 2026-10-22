@@ -3,12 +3,14 @@ import tomllib
 from dataclasses import dataclass, field, fields
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit, urlunsplit
 
 from keycard.constants import DerivationSource
 from keycard.parsing.keypath import KeyPath
 
 DEFAULT_KEY_PATH = "m/43'/60'/1581'/0'/0"
 SIGNING_POLICIES = ('allowed_kinds', 'all')
+DEFAULT_PORTS = {'ws': 80, 'wss': 443}
 # The applet computes ECDH only under NIP-06 (m/44'/1237') and EIP-1581 (m/43'/60'/1581').
 ECDH_PREFIXES = (bytes.fromhex('8000002c800004d5'), bytes.fromhex('8000002b8000003c8000062d'))
 MIN_KEY_PATH_DEPTH = 5
@@ -110,10 +112,25 @@ def validate_key_path(path: str) -> None:
                          "with at least 5 levels; the card refuses ECDH elsewhere")
 
 
+def normalize_relay_url(url: str) -> str:
+    """One spelling per relay, so a relay listed twice is one connection."""
+    bad = ValueError(f'relay.urls: {url!r} is not a ws:// or wss:// URL')
+    try:
+        parts = urlsplit(url.strip())
+        port = parts.port
+    except ValueError:
+        raise bad from None
+    scheme, host = parts.scheme.lower(), parts.hostname
+    if scheme not in DEFAULT_PORTS or not host:
+        raise bad
+    if ':' in host:
+        host = f'[{host}]'
+    netloc = host if port in (None, DEFAULT_PORTS[scheme]) else f'{host}:{port}'
+    return urlunsplit((scheme, netloc, parts.path.rstrip('/'), parts.query, ''))
+
+
 def _validate(cfg: Config, path: Path) -> None:
-    for url in cfg.relay.urls:
-        if not url.startswith(('ws://', 'wss://')):
-            raise ValueError(f'relay.urls: {url!r} is not a ws:// or wss:// URL')
+    cfg.relay.urls = list(dict.fromkeys(normalize_relay_url(url) for url in cfg.relay.urls))
     for key in cfg.keycard.ca_public_keys:
         if len(key) != 66 or key[:2] not in ('02', '03') or not _is_hex(key):
             raise ValueError('keycard.ca_public_keys: each key is a 33-byte compressed '

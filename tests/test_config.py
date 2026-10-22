@@ -2,7 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from keycard_nostr_bunker.config import DEFAULT_KEY_PATH, load_config, validate_key_path
+from keycard_nostr_bunker.config import (DEFAULT_KEY_PATH, load_config, normalize_relay_url,
+                                         validate_key_path)
 
 
 def write(tmp_path, text, mode=0o600):
@@ -65,6 +66,19 @@ def test_rotate_needs_generated_secret(tmp_path):
     assert cfg.connection.rotate_secret
 
 
+def test_relay_urls_are_normalized_and_deduplicated(tmp_path):
+    cfg = load_config(write(tmp_path, '[relay]\nurls = ["wss://Nos.lol/", " wss://nos.lol", '
+                                      '"wss://relay.example:443", "ws://local:8080/path/", '
+                                      '"wss://relay.example"]\n'))
+    assert cfg.relay.urls == ['wss://nos.lol', 'wss://relay.example', 'ws://local:8080/path']
+
+
+@pytest.mark.parametrize('url,normal', [('WSS://[::1]:443/', 'wss://[::1]'),
+                                        ('ws://h:80?a=1#x', 'ws://h?a=1')])
+def test_normalize_relay_url(url, normal):
+    assert normalize_relay_url(url) == normal
+
+
 @pytest.mark.parametrize('text,message', [
     ('[approval]\nmode = "always"\n', r'unknown section \[approval\]'),
     ('[connection]\naprove_clients = true\n', 'unknown key connection.aprove_clients'),
@@ -73,6 +87,8 @@ def test_rotate_needs_generated_secret(tmp_path):
     ('[signing]\nallowed_kinds = ["1"]\n', 'signing.allowed_kinds must be a list of integers'),
     ('[relay]\nurls = "wss://a"\n', 'relay.urls must be a list of strings'),
     ('[relay]\nurls = ["https://a"]\n', 'not a ws:// or wss:// URL'),
+    ('[relay]\nurls = ["wss://"]\n', 'not a ws:// or wss:// URL'),
+    ('[relay]\nurls = ["wss://a:port"]\n', 'not a ws:// or wss:// URL'),
     ('[keycard]\nca_public_keys = ["abcd"]\n', 'ca_public_keys'),
     ('[keycard]\nkey_path = "m/44\'/60\'/0\'/0/0"\n', 'key_path must be under'),
     ('[keycard]\nkey_path = "m/44\'/1237\'/0\'"\n', 'key_path must be under'),
