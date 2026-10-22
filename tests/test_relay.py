@@ -193,6 +193,14 @@ def test_other_messages_are_only_logged(message):
     assert all(r.sent == [] for r in relays)
 
 
+def test_a_rejected_reply_is_a_warning(caplog):
+    pool, relays = pool_with(lambda event, source: None)
+    deliver(relays[0], ['OK', 'abcdef0123', False, 'blocked: rate limited'])
+    deliver(relays[0], ['OK', '9876543210', True, ''])
+    assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
+        ('WARNING', 'wss://a rejected reply abcdef01: blocked: rate limited')]
+
+
 def test_start_and_stop_reach_every_relay():
     pool, relays = pool_with(lambda event, source: None)
     pool.start()

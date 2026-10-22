@@ -172,8 +172,11 @@ class RelayPool:
                     await asyncio.gather(*(r.send(['EVENT', reply]) for r in self._relays),
                                          return_exceptions=True)
             case ['OK', event_id, accepted, *rest]:
-                log.debug('Event %s %s %s', str(event_id)[:8],
-                          'accepted' if accepted else 'rejected', rest[0] if rest else '')
+                reason = rest[0] if rest else ''
+                if accepted:
+                    log.debug('Event %s accepted %s', str(event_id)[:8], reason)
+                else:
+                    log.warning('%s rejected reply %s: %s', relay.url, str(event_id)[:8], reason)
             case ['NOTICE', text]:
                 log.info('Relay notice from %s: %s', relay.url, text)
             case ['EOSE', _]:
