@@ -29,7 +29,6 @@ classifiers = [
 ]
 dependencies = [
     "cryptography>=42",
-    "ecdsa>=0.18",
     "keycard>=0.4.0",
     "pyscard>=2.0",
     "websockets>=13",
@@ -57,7 +56,7 @@ version = {attr = "keycard_nostr_bunker.__version__"}
 python_version = "3.11"
 
 [[tool.mypy.overrides]]
-module = ["ecdsa.*", "smartcard.*"]
+module = ["smartcard.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
