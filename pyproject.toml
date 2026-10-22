@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest", "flake8", "mypy"]
+dev = ["pytest", "pytest-cov", "flake8", "mypy"]
 
 [project.urls]
 Homepage = "https://github.com/mmlado/keycard-nostr-bunker"
@@ -46,3 +46,7 @@ ignore_missing_imports = true
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+
+[tool.coverage.run]
+source = ["keycard_nostr_bunker"]
+branch = true
