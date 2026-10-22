@@ -1,6 +1,6 @@
 # keycard-nostr-bunker
 
-[![Build status](https://github.com/mmlado/keycard-nostr-bunker/actions/workflows/test.yml/badge.svg)](https://github.com/mmlado/keycard-nostr-bunker/actions/workflows/test.yml) [![PyPI version](https://img.shields.io/pypi/v/keycard-nostr-bunker.svg)](https://pypi.org/project/keycard-nostr-bunker/) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+[![CI](https://github.com/mmlado/keycard-nostr-bunker/actions/workflows/test.yml/badge.svg)](https://github.com/mmlado/keycard-nostr-bunker/actions/workflows/test.yml) [![Release](https://github.com/mmlado/keycard-nostr-bunker/actions/workflows/release.yml/badge.svg)](https://github.com/mmlado/keycard-nostr-bunker/actions/workflows/release.yml) [![codecov](https://codecov.io/gh/mmlado/keycard-nostr-bunker/branch/main/graph/badge.svg)](https://codecov.io/gh/mmlado/keycard-nostr-bunker) [![PyPI version](https://img.shields.io/pypi/v/keycard-nostr-bunker.svg)](https://pypi.org/project/keycard-nostr-bunker/) [![Python](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/) ![Platform](https://img.shields.io/badge/platform-Linux-green.svg) [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE) ![Last commit](https://img.shields.io/github/last-commit/mmlado/keycard-nostr-bunker.svg) ![Stars](https://img.shields.io/github/stars/mmlado/keycard-nostr-bunker.svg?style=social)
 
 A NIP-46 remote signer (bunker) that keeps your Nostr key on a [Keycard](https://keycard.tech).
 
