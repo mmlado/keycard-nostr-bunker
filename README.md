@@ -80,7 +80,9 @@ card.generate_key()                          # a fresh key that lives only on th
 
 ## Configuration
 
-Copy `config.example.toml` to `~/.config/keycard-nostr-bunker/config.toml` and edit. The loader is strict: an unknown key or a value of the wrong type is an error, and a config that holds a PIN or secret must be mode 0600.
+The first `keycard-nostr-bunker` run writes the config to `~/.config/keycard-nostr-bunker/config.toml`. In a terminal it asks a few questions first: the relays, what the card may sign, which certificate your card carries, whether to ask before admitting a client, and whether to store the PIN for running as a service. Enter keeps the suggested answer. Without a terminal it writes the defaults and says where. `keycard-nostr-bunker init` asks again later; it starts from the current values, keeps every setting it does not ask about, and backs up the old file first.
+
+The file is commented, and the rest is set by editing it. The loader is strict: an unknown key or a value of the wrong type is an error, and a config that holds a PIN or secret must be mode 0600.
 
 | Section | Key | Meaning |
 |---|---|---|
@@ -130,21 +132,23 @@ That reads `config.toml` from the current directory, or `~/.config/keycard-nostr
 11:02:05 [INFO] Keycard: PIN verified
 11:02:05 [INFO] Keycard: ready
 11:02:05 [INFO] User pubkey: 1ed7d46f37d4f0f5f35538679bf77fd9b0a839041acf3a1dbbae5a3e0fd347e1
-11:02:05 [INFO] Signing policy: allowed_kinds [0, 1, 3, 5, 6, 7, 10002]
+11:02:05 [INFO] Signing policy: allowed_kinds [0, 1, 3, 4, 5, 6, 7, 13, 10002, 10050, 22242]
 11:02:05 [INFO] Admitted clients: 0
 
-bunker://4f6915de49dbfe3457bcedaf217a25ac188222f96e1a17aa518eb57e5ccf0c89?relay=wss://relay.damus.io&relay=wss://nos.lol&secret=X0dxuE2zI2BAOcGKqWTbsg
+bunker://4f6915de49dbfe3457bcedaf217a25ac188222f96e1a17aa518eb57e5ccf0c89?relay=wss://nos.lol&relay=wss://relay.primal.net&secret=X0dxuE2zI2BAOcGKqWTbsg
 
-11:02:05 [INFO] Connected to relay: wss://relay.damus.io
-11:02:10 [INFO] NIP-46 admitted client 8f1f3a2c...
-11:02:11 [INFO] NIP-46 sign_event -> ok
+11:02:05 [INFO] Connected to relay: wss://nos.lol
+11:02:10 [INFO] client 8f1f3a2c9e0d4b7a61c5e2f80b93d4a17c6e58f2a0b1d3c4e5f60718293a4b5c admitted, requested: nothing listed
+11:02:10 [INFO] NIP-46 connect -> ok
+11:02:11 [INFO] NIP-46 sign_event kind 1 -> ok
 ```
 
 Paste the `bunker://` URL into the client's remote signer field. The URL carries the secret, so it is printed only when the bunker runs in a terminal; a service logs a hint instead, and `keycard-nostr-bunker url` prints it on demand.
 
 | Command | |
 |---|---|
-| `keycard-nostr-bunker` or `keycard-nostr-bunker run` | start the bunker |
+| `keycard-nostr-bunker` or `keycard-nostr-bunker run` | start the bunker; the first run writes the config |
+| `keycard-nostr-bunker init` | set up the config by answering a few questions |
 | `keycard-nostr-bunker run --no-card` | sign with a throwaway key made at start instead of a card, to test the relay side |
 | `keycard-nostr-bunker url` | print the bunker URL, secret included, without starting anything |
 | `keycard-nostr-bunker readers` | list PC/SC readers, for the `reader` setting |
@@ -186,7 +190,7 @@ The PIN comes from the first of: `keycard.pin` in the config, the `KEYCARD_NOSTR
 keycard-nostr-bunker service install -c ~/.config/keycard-nostr-bunker/config.toml
 ```
 
-This writes a systemd user unit for that config, pointing at the `keycard-nostr-bunker` command you ran, then enables and starts it. A service cannot prompt for the PIN, so the install refuses unless `keycard.pin` is set or a file named `pin` sits next to the config; that file is passed to the service as a systemd credential and the PIN stays out of the config. Create it with:
+This writes a systemd user unit for that config, pointing at the `keycard-nostr-bunker` command you ran, then enables and starts it. A service cannot prompt for the PIN, so the install refuses unless `keycard.pin` is set or a file named `pin` sits next to the config; that file is passed to the service as a systemd credential and the PIN stays out of the config. `keycard-nostr-bunker init` writes it if you answer yes to storing the PIN, or create it with:
 
 ```sh
 (umask 077 && echo 123456 > ~/.config/keycard-nostr-bunker/pin)
@@ -234,7 +238,7 @@ Every method but `connect` requires an admitted client. Every request must be si
 
 ## Relays
 
-The relay is only a mailbox for signer traffic. It must accept kind 24133 events without NIP-42 AUTH and be reachable from the bunker and from every client; it does not have to be a relay you post to. `wss://relay.nsec.app` exists for NIP-46 traffic; `wss://relay.damus.io` and `wss://nos.lol` work too. Use two. If a relay closes the subscription, the bunker subscribes again after a delay that grows each time; a relay that demands NIP-42 AUTH cannot be used, since the bunker does not authenticate. Both the bunker and the clients only make outbound connections, so NAT and firewalls need no configuration.
+The relay is only a mailbox for signer traffic. It must accept kind 24133 events without NIP-42 AUTH and be reachable from the bunker and from every client; it does not have to be a relay you post to. `wss://relay.nsec.app` exists for NIP-46 traffic; `wss://nos.lol` and `wss://relay.primal.net`, the defaults, work too. `wss://relay.damus.io` rate-limits a busy bunker key, so a reply can be dropped; the log shows `rejected reply ... rate-limited`. Use two. If a relay closes the subscription, the bunker subscribes again after a delay that grows each time; a relay that demands NIP-42 AUTH cannot be used, since the bunker does not authenticate. Both the bunker and the clients only make outbound connections, so NAT and firewalls need no configuration.
 
 ## Tests
 

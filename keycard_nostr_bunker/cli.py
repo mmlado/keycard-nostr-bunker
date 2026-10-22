@@ -17,6 +17,7 @@ from . import __version__, service
 from .admission import CONFIG, Admission, AdmissionError, Approver, ClientRecord, defer
 from .card import CardError, KeycardSigner, list_readers
 from .config import Config, load_config
+from .configure import SetupCancelled, setup, write_template
 from .nip46 import Bunker
 from .perms import Permissions
 from .relay import RelayConn, RelayFactory, RelayPool
@@ -332,6 +333,8 @@ def build_parser() -> argparse.ArgumentParser:
     run.add_argument('--no-card', action='store_true',
                      help='sign with a throwaway key instead of a Keycard (testing)')
 
+    commands.add_parser('init', parents=[common],
+                        help='write the config by answering a few questions')
     commands.add_parser('url', parents=[common],
                         help='print the bunker:// URL, secret included, without starting')
     commands.add_parser('readers', parents=[common], help='list PC/SC readers')
@@ -378,9 +381,18 @@ def main(argv: list[str] | None = None) -> int:
     if command == 'service' and action == 'uninstall':
         return uninstall_service()
 
-    if explicit and not config_path.exists():
-        log.error('%s does not exist', config_path)
-        return 1
+    if command == 'init':
+        if init_config(config_path):
+            return 1
+        print('Start the bunker with `keycard-nostr-bunker`; `keycard-nostr-bunker url` '
+              'prints the URL for a client.')
+        return 0
+    if not config_path.exists():
+        if command != 'run' or (explicit and not interactive()):
+            log.error('%s does not exist; run `keycard-nostr-bunker init` to write it', config_path)
+            return 1
+        if not first_run(config_path):
+            return 1
     try:
         cfg = load_config(config_path)
     except ValueError as e:
@@ -395,9 +407,38 @@ def main(argv: list[str] | None = None) -> int:
     return run_bunker(cfg, config_path, getattr(args, 'no_card', False))
 
 
+def interactive() -> bool:
+    return sys.stdin.isatty() and sys.stdout.isatty()
+
+
+def init_config(path: Path) -> int:
+    if not interactive():
+        log.error('init asks questions, so it needs a terminal')
+        return 1
+    try:
+        setup(path)
+    except SetupCancelled:
+        print('\nSetup cancelled; nothing written')
+        return 1
+    except ValueError as e:
+        log.error('%s: %s', path, e)
+        return 1
+    return 0
+
+
+def first_run(path: Path) -> bool:
+    """No config yet: ask in a terminal, otherwise write the template."""
+    if interactive():
+        print(f'No config yet at {path}; a few questions first.\n')
+        return init_config(path) == 0
+    write_template(path)
+    log.warning('No config found; wrote the default one to %s. Edit it, or run '
+                '`keycard-nostr-bunker init` in a terminal', path)
+    return True
+
+
 def run_bunker(cfg: Config, config_path: Path, no_card: bool) -> int:
-    log.info('Config: %s%s', config_path.resolve(),
-             '' if config_path.exists() else ' (missing, using defaults)')
+    log.info('Config: %s', config_path.resolve())
     log.info('State: %s', state(cfg).path)
     if not cfg.relay.urls:
         log.error('No relay URLs configured')

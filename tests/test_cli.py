@@ -6,6 +6,7 @@ import pytest
 from keycard_nostr_bunker import cli
 from keycard_nostr_bunker.admission import Admission, AdmissionError, defer
 from keycard_nostr_bunker.cli import build_parser, main
+from keycard_nostr_bunker.configure import SetupCancelled
 from keycard_nostr_bunker.state import StateDir
 from keycard_nostr_bunker.signer import SoftwareSigner
 
@@ -160,3 +161,51 @@ def test_tracebacks_keep_their_lines_but_not_escapes():
     text = cli.EscapingFormatter(cli.LOG_FORMAT).format(failed)
     assert text.count('\n') >= 3 and '\x1b' not in text and '\x07' not in text
     assert "ValueError: bad\\x1b]52;c;x\\x07" in text
+
+
+@pytest.fixture
+def no_config(tmp_path, monkeypatch):
+    """The default config location, empty: a first run."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path / 'xdg'))
+    started = []
+    monkeypatch.setattr(cli, 'run_bunker', lambda cfg, path, no_card: started.append(cfg) or 0)
+    return tmp_path / 'xdg' / 'keycard-nostr-bunker' / 'config.toml', started
+
+
+def test_first_run_without_a_terminal_writes_the_template(no_config, caplog):
+    path, started = no_config
+    assert main([]) == 0
+    assert 'wrote the default one' in caplog.text and path.exists()
+    assert started[0].relay.urls == ['wss://nos.lol', 'wss://relay.primal.net']
+
+
+def test_first_run_in_a_terminal_asks(no_config, monkeypatch):
+    path, started = no_config
+    monkeypatch.setattr(cli, 'interactive', lambda: True)
+    monkeypatch.setattr(cli, 'setup', lambda p: p.parent.mkdir(parents=True) or
+                        p.write_text('[connection]\napprove_clients = true\n'))
+    assert main(['run']) == 0
+    assert started[0].connection.approve_clients
+
+
+def test_cancelled_first_run_does_not_start(no_config, monkeypatch):
+    path, started = no_config
+    monkeypatch.setattr(cli, 'interactive', lambda: True)
+
+    def cancel(p):
+        raise SetupCancelled()
+
+    monkeypatch.setattr(cli, 'setup', cancel)
+    assert main(['run']) == 1 and started == [] and not path.exists()
+
+
+def test_other_commands_need_a_config(no_config, caplog):
+    path, started = no_config
+    assert main(['url']) == 1
+    assert 'run `keycard-nostr-bunker init`' in caplog.text and not path.exists()
+
+
+def test_init_needs_a_terminal(no_config, caplog):
+    assert main(['init']) == 1
+    assert 'needs a terminal' in caplog.text

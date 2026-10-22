@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The permissions a client requests in `connect` are stored and shown in the approval prompt and the client lists; what gets signed is decided by the signing policy, `[signing] policy = "allowed_kinds" | "all"`
 - Every request event is verified, its signature, id and age, before it is served, and served ids are kept across restarts
 - A strict config loader: unknown keys and wrong types are errors, `key_path` and `ca_public_keys` are validated, and a config that holds a PIN or secret must be private
+- The first run writes the config, after a few questions when run in a terminal; `init` asks them again later
 - The bunker URL is printed only on a terminal; `keycard-nostr-bunker url` prints it on demand
 - State files are written atomically with mode 0600 in a 0700 directory, and the bunker and the `clients` commands take turns through a lock file
 - Several relays, with reconnect

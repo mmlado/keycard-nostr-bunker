@@ -10,6 +10,7 @@ from keycard.parsing.keypath import KeyPath
 
 DEFAULT_KEY_PATH = "m/43'/60'/1581'/0'/0"
 SIGNING_POLICIES = ('allowed_kinds', 'all')
+USUAL_KINDS = (0, 1, 3, 4, 5, 6, 7, 13, 10002, 10050, 22242)
 DEFAULT_PORTS = {'ws': 80, 'wss': 443}
 # The applet computes ECDH only under NIP-06 (m/44'/1237') and EIP-1581 (m/43'/60'/1581').
 ECDH_PREFIXES = (bytes.fromhex('8000002c800004d5'), bytes.fromhex('8000002b8000003c8000062d'))
@@ -18,7 +19,7 @@ MIN_KEY_PATH_DEPTH = 5
 
 @dataclass
 class RelayConfig:
-    urls: list[str] = field(default_factory=lambda: ['wss://relay.damus.io'])
+    urls: list[str] = field(default_factory=lambda: ['wss://nos.lol', 'wss://relay.primal.net'])
 
 
 @dataclass
@@ -38,7 +39,7 @@ class SignerConfig:
 @dataclass
 class SigningConfig:
     policy: str = 'allowed_kinds'
-    allowed_kinds: list[int] = field(default_factory=lambda: [1])
+    allowed_kinds: list[int] = field(default_factory=lambda: list(USUAL_KINDS))
 
 
 @dataclass

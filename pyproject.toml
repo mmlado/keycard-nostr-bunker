@@ -31,6 +31,9 @@ keycard-nostr-bunker = "keycard_nostr_bunker.cli:main"
 [tool.setuptools.packages.find]
 include = ["keycard_nostr_bunker*"]
 
+[tool.setuptools.package-data]
+keycard_nostr_bunker = ["config.example.toml"]
+
 [tool.setuptools.dynamic]
 version = {attr = "keycard_nostr_bunker.__version__"}
 

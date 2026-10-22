@@ -2,8 +2,8 @@ from pathlib import Path
 
 import pytest
 
-from keycard_nostr_bunker.config import (DEFAULT_KEY_PATH, load_config, normalize_relay_url,
-                                         validate_key_path)
+from keycard_nostr_bunker.config import (DEFAULT_KEY_PATH, USUAL_KINDS, load_config,
+                                         normalize_relay_url, validate_key_path)
 
 
 def write(tmp_path, text, mode=0o600):
@@ -15,10 +15,10 @@ def write(tmp_path, text, mode=0o600):
 
 def test_defaults_when_missing(tmp_path):
     cfg = load_config(tmp_path / 'none.toml')
-    assert cfg.relay.urls == ['wss://relay.damus.io']
+    assert cfg.relay.urls == ['wss://nos.lol', 'wss://relay.primal.net']
     assert cfg.keycard.key_path == DEFAULT_KEY_PATH
     assert cfg.keycard.trust_test_ca is False
-    assert cfg.signing.policy == 'allowed_kinds' and cfg.signing.allowed_kinds == [1]
+    assert cfg.signing.policy == 'allowed_kinds' and cfg.signing.allowed_kinds == list(USUAL_KINDS)
     default_key = Path('~/.config/keycard-nostr-bunker/signer.key').expanduser()
     assert cfg.signer.key_file == str(default_key)
 
