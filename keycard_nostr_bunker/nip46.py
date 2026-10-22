@@ -86,7 +86,7 @@ class Bunker:
                 reply = self._reply(client, request_id, '', error, legacy)
             except ValueError:
                 return None
-        log.info('NIP-46 %s -> %s', method, error or 'ok')
+        log.info('NIP-46 %s -> %s', _label(method, params), error or 'ok')
         return reply
 
     def _dispatch(self, method: str, params: list, client: str, source: str) -> str:
@@ -116,13 +116,9 @@ class Bunker:
                 raise RequestError(f'unsupported method: {method}')
 
     def _sign_event(self, params: list) -> str:
-        raw = _param(params, 0)
-        unsigned = json.loads(raw) if isinstance(raw, str) else raw
-        if not isinstance(unsigned, dict):
-            raise RequestError('event is not an object')
+        unsigned = _unsigned(params)
         kind = int(unsigned['kind'])
         if not self._approved(kind):
-            log.info('Rejected sign_event: kind %d is not in signing.allowed_kinds', kind)
             raise RequestError(f'kind {kind} is not in signing.allowed_kinds')
         signed = nip01.finalize_event(unsigned, self.user.pubkey.hex(), self.user.sign)
         return json.dumps(signed, separators=(',', ':'), ensure_ascii=False)
@@ -155,6 +151,24 @@ class Bunker:
 
 def _hex(value: Any, length: int) -> bool:
     return isinstance(value, str) and len(value) == length and _HEX.fullmatch(value) is not None
+
+
+def _unsigned(params: list) -> dict[str, Any]:
+    raw = _param(params, 0)
+    unsigned = json.loads(raw) if isinstance(raw, str) else raw
+    if not isinstance(unsigned, dict):
+        raise RequestError('event is not an object')
+    return unsigned
+
+
+def _label(method: str, params: list) -> str:
+    """The method as the log shows it: for sign_event with the kind."""
+    if method == 'sign_event':
+        try:
+            return f'sign_event kind {int(_unsigned(params)["kind"])}'
+        except (RequestError, ValueError, TypeError, KeyError):
+            pass
+    return method
 
 
 def _param(params: list, index: int) -> Any:

@@ -1,4 +1,5 @@
 import json
+import logging
 import time
 
 import pytest
@@ -140,6 +141,18 @@ def test_policy_rejects_other_kind():
     b = bunker('allowed_kinds', [0, 1])
     r = call('sign_event', [{'kind': 4, 'content': '', 'created_at': 1700000000}], b)
     assert r['result'] == '' and r['error'] == 'kind 4 is not in signing.allowed_kinds'
+
+
+def test_log_names_the_signed_kind(caplog):
+    caplog.set_level(logging.INFO, logger='keycard_nostr_bunker.nip46')
+    b = bunker('allowed_kinds', [1])
+    call('sign_event', [{'kind': 1, 'content': '', 'created_at': 1700000000}], b)
+    call('sign_event', [json.dumps({'kind': 22242, 'content': '', 'created_at': 1700000000})], b)
+    call('sign_event', ['not json'], b)
+    assert [m for m in caplog.messages if '->' in m] == [
+        'NIP-46 sign_event kind 1 -> ok',
+        'NIP-46 sign_event kind 22242 -> kind 22242 is not in signing.allowed_kinds',
+        'NIP-46 sign_event -> sign_event failed: Expecting value: line 1 column 1 (char 0)']
 
 
 def test_nip44_encrypt_decrypt():
