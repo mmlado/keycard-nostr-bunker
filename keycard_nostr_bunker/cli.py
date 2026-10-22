@@ -308,7 +308,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     run = commands.add_parser('run', parents=[common], help='start the bunker (the default)')
     run.add_argument('--no-card', action='store_true',
-                     help='sign with the bunker key instead of a Keycard (testing)')
+                     help='sign with a throwaway key instead of a Keycard (testing)')
 
     commands.add_parser('url', parents=[common],
                         help='print the bunker:// URL, secret included, without starting')
@@ -385,8 +385,9 @@ def run_bunker(cfg: Config, config_path: Path, no_card: bool) -> int:
 
     card: KeycardSigner | None = None
     if no_card:
-        user: Signer = transport
-        log.warning('No card: signing with the bunker key')
+        # Not the transport key, or a client allowed to decrypt could read other clients' traffic.
+        user: Signer = SoftwareSigner.generate()
+        log.warning('No card: signing with a throwaway key made for this run')
     else:
         try:
             card = user = open_card(cfg)

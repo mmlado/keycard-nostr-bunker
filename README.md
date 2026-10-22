@@ -145,7 +145,7 @@ Paste the `bunker://` URL into the client's remote signer field. The URL carries
 | Command | |
 |---|---|
 | `keycard-nostr-bunker` or `keycard-nostr-bunker run` | start the bunker |
-| `keycard-nostr-bunker run --no-card` | sign with the bunker key instead of a card, to test the relay side |
+| `keycard-nostr-bunker run --no-card` | sign with a throwaway key made at start instead of a card, to test the relay side |
 | `keycard-nostr-bunker url` | print the bunker URL, secret included, without starting anything |
 | `keycard-nostr-bunker readers` | list PC/SC readers, for the `reader` setting |
 | `keycard-nostr-bunker service install` / `uninstall` | systemd user service, see below |

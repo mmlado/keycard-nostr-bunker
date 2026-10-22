@@ -51,6 +51,17 @@ def config(tmp_path, **connection):
     return cfg
 
 
+def test_no_card_signs_with_its_own_key(tmp_path, monkeypatch):
+    seen = {}
+
+    async def fake_run(cfg, transport, user):
+        seen.update(transport=transport, user=user)
+
+    monkeypatch.setattr(cli, 'run', fake_run)
+    assert cli.run_bunker(config(tmp_path), tmp_path / 'config.toml', no_card=True) == 0
+    assert seen['user'].pubkey != seen['transport'].pubkey
+
+
 def request(transport, method, params):
     return envelope.seal({'id': method, 'method': method, 'params': params}, CLIENT,
                          transport.pubkey.hex(), CLIENT.ecdh(transport.pubkey))
