@@ -272,21 +272,23 @@ def test_old_identity_file_gets_the_key_uid(rig):
     assert (rig.path / 'user.pubkey').read_text().splitlines()[1] == KEY_UID.hex()
 
 
-def test_wrong_card_refused_before_the_pin(rig):
+def test_wrong_card_refused_before_the_pin(rig, caplog):
     (rig.path / 'user.pubkey').write_text(f'{schnorr.pubkey(SECKEY).hex()}\n{"02" * 32}\n')
     signer = rig.make()
     assert not signer.present
-    assert 'key UID' in signer.refused
+    assert 'key UID' in signer.refused and str(rig.path) not in signer.refused
+    assert f'delete {rig.path / "user.pubkey"}' in caplog.text
     assert verify_calls(rig.cards[0]) == []
     assert rig.cards[0].transport.connected is None
     with pytest.raises(CardNotPresent, match='refused'):
         signer.sign(bytes(32))
 
 
-def test_wrong_key_refused_after_the_pin(rig):
+def test_wrong_key_refused_after_the_pin(rig, caplog):
     (rig.path / 'user.pubkey').write_text(schnorr.pubkey((9).to_bytes(32, 'big')).hex() + '\n')
     signer = rig.make()
     assert not signer.present and 'not the known user key' in signer.refused
+    assert str(rig.path) not in signer.refused and str(rig.path) in caplog.text
     assert rig.cards[0].transport.connected is None
 
 

@@ -38,7 +38,16 @@ RETRY_MAX = 30.0
 
 
 class CardError(Exception):
-    pass
+    """The message goes to clients; fix is the local remedy, for the log only."""
+
+    def __init__(self, message: str, fix: str = ''):
+        super().__init__(message)
+        self.fix = fix
+
+
+def _logged(e: Exception) -> str:
+    fix = getattr(e, 'fix', '')
+    return f'{e}; {fix}' if fix else str(e)
 
 
 class CardNotPresent(CardError, SignerUnavailable):
@@ -143,7 +152,7 @@ class KeycardSigner:
             except Exception as e:
                 self._failed.add(reader)
                 self.refused = str(e)
-                log.error('Keycard: %s: %s', reader, e)
+                log.error('Keycard: %s: %s', reader, _logged(e))
 
     def detach(self, reader: str) -> None:
         with self._lock:
@@ -232,8 +241,8 @@ class KeycardSigner:
             raise CardError('card has no key loaded')
         key_uid = bytes(info.key_uid)
         if self._key_uid is not None and key_uid != self._key_uid:
-            raise CardError('not the known user card (key UID differs); insert the right card, '
-                            f'or delete {self._pubkey_file} after loading a new key')
+            raise CardError('not the known user card (key UID differs); insert the right card',
+                            f'after loading a new key, delete {self._pubkey_file}')
         if key_uid in self._pin_rejected or self._rejected_earlier(key_uid):
             self._pin_rejected.add(key_uid)
             raise CardError('PIN was rejected for this card earlier; fix keycard.pin and restart')
@@ -255,8 +264,9 @@ class KeycardSigner:
         log.info('Keycard: PIN verified')
         pubkey = self._export_pubkey(card)
         if self._pubkey is not None and pubkey != self._pubkey:
-            raise CardError(f'key at {self._cfg.key_path} is not the known user key; '
-                            f'delete {self._pubkey_file} after a key_path change')
+            raise CardError('the key on the card is not the known user key',
+                            f'after changing key_path ({self._cfg.key_path}), '
+                            f'delete {self._pubkey_file}')
         if self._pubkey is None or self._key_uid is None:
             self._pubkey, self._key_uid = pubkey, key_uid
             self._save_identity()
@@ -297,6 +307,7 @@ class KeycardSigner:
         except CardError as e:
             self._failed.add(reader)
             self.refused = str(e)
+            log.error('Keycard: %s: %s', reader, _logged(e))
             raise CardNotPresent(f'Keycard refused: {e}') from e
         return op(self._require().card)
 
