@@ -11,6 +11,22 @@ license = "MIT"
 license-files = ["LICENSE"]
 requires-python = ">=3.11"
 authors = [{name = "Mladen Milankovic"}]
+keywords = ["nostr", "nip46", "nip-46", "bunker", "remote-signer", "nostr-connect", "keycard",
+            "smartcard", "hardware-wallet", "schnorr"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3 :: Only",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Programming Language :: Python :: 3.14",
+    "Topic :: Communications",
+    "Topic :: Security :: Cryptography",
+]
 dependencies = [
     "cryptography>=42",
     "ecdsa>=0.18",
