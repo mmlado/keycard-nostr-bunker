@@ -11,7 +11,7 @@ import termios
 import threading
 import time
 from pathlib import Path
-from typing import Callable
+from typing import Any, Callable
 
 from . import __version__, service
 from .admission import CONFIG, Admission, AdmissionError, Approver, ClientRecord, defer
@@ -29,6 +29,7 @@ log = logging.getLogger('keycard_nostr_bunker')
 PIN_ENV = 'KEYCARD_NOSTR_BUNKER_PIN'
 PIN_CREDENTIAL = 'pin'
 APPROVAL_TIMEOUT = 60
+LOG_FORMAT = '%(asctime)s [%(levelname)s] %(message)s'
 LOCAL_CONFIG = Path('config.toml')
 
 
@@ -75,6 +76,27 @@ def show_url(url: str, reason: str, say: Callable[[str], None] = print) -> None:
         say(f'\n{url}\n')
     else:
         log.info('%s; run "keycard-nostr-bunker url" to show the bunker URL', reason)
+
+
+class EscapingFormatter(logging.Formatter):
+    """Escapes control characters: log text from clients, relays and readers is untrusted.
+
+    In the message line that includes newlines, so nobody can fake a log line;
+    tracebacks keep theirs.
+    """
+
+    def formatMessage(self, record: logging.LogRecord) -> str:
+        return _escape(super().formatMessage(record), keep='')
+
+    def formatException(self, ei: Any) -> str:
+        return _escape(super().formatException(ei), keep='\n')
+
+    def formatStack(self, stack_info: str) -> str:
+        return _escape(super().formatStack(stack_info), keep='\n')
+
+
+def _escape(text: str, keep: str) -> str:
+    return ''.join(c if c.isprintable() or c in keep else repr(c)[1:-1] for c in text)
 
 
 class TerminalApprover:
@@ -338,8 +360,10 @@ def main(argv: list[str] | None = None) -> int:
     explicit = hasattr(args, 'config')
     config_path = Path(args.config) if explicit else default_config()
 
+    handler = logging.StreamHandler()
+    handler.setFormatter(EscapingFormatter(LOG_FORMAT, '%H:%M:%S'))
     logging.basicConfig(level=logging.DEBUG if getattr(args, 'verbose', False) else logging.INFO,
-                        format='%(asctime)s [%(levelname)s] %(message)s', datefmt='%H:%M:%S')
+                        handlers=[handler])
     logging.getLogger('websockets').setLevel(logging.WARNING)
     logging.getLogger('asyncio').setLevel(logging.INFO)
 

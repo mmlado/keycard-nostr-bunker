@@ -1,5 +1,9 @@
+import logging
+import sys
+
 import pytest
 
+from keycard_nostr_bunker import cli
 from keycard_nostr_bunker.admission import Admission, AdmissionError, defer
 from keycard_nostr_bunker.cli import build_parser, main
 from keycard_nostr_bunker.state import StateDir
@@ -135,3 +139,24 @@ def test_clients_from_the_config(tmp_path, capsys):
     assert 'already admitted by connection.authorized_clients' in capsys.readouterr().out
     assert main(['clients', 'revoke', other, *c]) == 1
     assert 'remove it there and restart the bunker' in capsys.readouterr().out
+
+
+def record(msg, *args, exc_info=None):
+    return logging.LogRecord('keycard_nostr_bunker', logging.INFO, __file__, 1, msg, args, exc_info)
+
+
+def test_log_lines_escape_control_characters():
+    formatter = cli.EscapingFormatter(cli.LOG_FORMAT)
+    line = formatter.format(record('NIP-46 %s -> ok', 'ping\x1b[2J\n12:00:00 [INFO] fake'))
+    assert '\x1b' not in line and '\n' not in line
+    assert line.endswith('NIP-46 ping\\x1b[2J\\n12:00:00 [INFO] fake -> ok')
+
+
+def test_tracebacks_keep_their_lines_but_not_escapes():
+    try:
+        raise ValueError('bad\x1b]52;c;x\x07')
+    except ValueError:
+        failed = record('failed', exc_info=sys.exc_info())
+    text = cli.EscapingFormatter(cli.LOG_FORMAT).format(failed)
+    assert text.count('\n') >= 3 and '\x1b' not in text and '\x07' not in text
+    assert "ValueError: bad\\x1b]52;c;x\\x07" in text
