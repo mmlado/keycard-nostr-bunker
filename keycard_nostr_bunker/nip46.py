@@ -13,9 +13,6 @@ from .signer import Signer, SignerUnavailable
 
 log = logging.getLogger(__name__)
 
-METHODS = frozenset({'get_public_key', 'ping', 'sign_event', 'nip44_encrypt', 'nip44_decrypt',
-                     'nip04_encrypt', 'nip04_decrypt'})
-
 _HEX = re.compile(r'[0-9a-f]+')
 
 
@@ -101,9 +98,7 @@ class Bunker:
             log.info('NIP-46 %s from unauthorized %s', method, client)
             raise AdmissionError('unauthorized')
         if method == 'sign_event':
-            return self._sign_event(params, client)
-        if method in METHODS:
-            self.admission.require(client, method)
+            return self._sign_event(params)
         match method:
             case 'get_public_key':
                 return self.user.pubkey.hex()
@@ -120,7 +115,7 @@ class Bunker:
             case _:
                 raise RequestError(f'unsupported method: {method}')
 
-    def _sign_event(self, params: list, client: str) -> str:
+    def _sign_event(self, params: list) -> str:
         raw = _param(params, 0)
         unsigned = json.loads(raw) if isinstance(raw, str) else raw
         if not isinstance(unsigned, dict):
@@ -129,7 +124,6 @@ class Bunker:
         if not self._approved(kind):
             log.info('Rejected sign_event: kind %d is not in signing.allowed_kinds', kind)
             raise RequestError(f'kind {kind} is not in signing.allowed_kinds')
-        self.admission.require(client, 'sign_event', kind)
         signed = nip01.finalize_event(unsigned, self.user.pubkey.hex(), self.user.sign)
         return json.dumps(signed, separators=(',', ':'), ensure_ascii=False)
 

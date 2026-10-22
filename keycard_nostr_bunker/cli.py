@@ -192,7 +192,7 @@ def _row(record: ClientRecord) -> str:
     when = (time.strftime('%Y-%m-%d %H:%M', time.localtime(record.since))
             if record.since is not None else 'unknown time')
     via = f'  via {record.via}' if record.via else ''
-    return f'{record.pubkey}  {when}{via}  permissions: {record.perms.describe()}'
+    return f'{record.pubkey}  {when}{via}  requested: {record.perms.describe()}'
 
 
 def manage_clients(cfg: Config, action: str, pubkey: str | None) -> int:
@@ -211,7 +211,7 @@ def manage_clients(cfg: Config, action: str, pubkey: str | None) -> int:
             except AdmissionError as e:
                 print(e)
                 return 1
-            print(f'Approved {pubkey}, permissions: {record.perms.describe()}')
+            print(f'Approved {pubkey}, requested: {record.perms.describe()}')
         case 'revoke':
             assert pubkey
             return revoke(cfg, admission, pubkey)

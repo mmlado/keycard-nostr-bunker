@@ -78,13 +78,12 @@ def test_secret_file_is_generated_private_and_shared(tmp_path):
 
 def test_connect_with_the_secret_admits():
     adm = memory(now=lambda: 1700000000)
-    refused('unauthorized', adm.require, A, 'ping')
+    assert not adm.admitted(A)
     assert adm.connect(A, SECRET, '', RELAY) == 'ack'
     assert adm.admitted(A)
     [record] = adm.clients()
     assert (record.pubkey, record.since, record.via, record.perms) == (
         A, 1700000000, RELAY, Permissions(None))
-    adm.require(A, 'sign_event', 3)
 
 
 def test_wrong_or_missing_secret_is_refused():
@@ -105,48 +104,25 @@ def test_admitted_clients_survive_a_restart(tmp_path):
     first.connect(A, first.secret, 'sign_event:1', RELAY)
     second = Admission(StateDir(tmp_path))
     assert second.admitted(A)
-    refused('sign_event for kind 3', second.require, A, 'sign_event', 3)
+    assert second.clients()[0].perms.items == frozenset({'sign_event:1'})
 
 
 # requested permissions
 
-def test_requested_permissions_are_enforced():
+def test_requested_permissions_are_kept_as_first_sent():
     adm = memory()
     adm.connect(A, SECRET, 'sign_event:1,nip44_encrypt', RELAY)
-    adm.require(A, 'sign_event', 1)
-    adm.require(A, 'nip44_encrypt')
-    adm.require(A, 'ping')
-    adm.require(A, 'get_public_key')
-    refused('sign_event for kind 3 is not among the permissions this client requested',
-            adm.require, A, 'sign_event', 3)
-    refused('nip44_decrypt is not among the permissions this client requested',
-            adm.require, A, 'nip44_decrypt')
-
-
-def test_permission_edge_cases():
-    adm = memory()
-    adm.connect(A, SECRET, '', RELAY)
     adm.connect(B, SECRET, '!!, sign event', RELAY)
-    adm.connect(C, SECRET, 'sign_event', RELAY)
-    adm.require(A, 'nip04_decrypt')
-    refused('not among the permissions', adm.require, B, 'sign_event', 1)
-    adm.require(B, 'ping')
-    adm.require(C, 'sign_event', 30023)
-
-
-def test_reconnecting_cannot_widen_permissions():
-    adm = memory()
-    adm.connect(A, SECRET, 'sign_event:1', RELAY)
     assert adm.connect(A, SECRET, 'sign_event', RELAY) == 'ack'
-    refused('not among the permissions', adm.require, A, 'sign_event', 3)
+    assert {r.pubkey: r.perms.items for r in adm.clients()} == {
+        A: frozenset({'sign_event:1', 'nip44_encrypt'}), B: frozenset()}
 
 
 # clients from the config
 
 def test_config_clients_need_no_secret_and_are_unrestricted():
     adm = memory(authorized=[B])
-    assert adm.connect(B, '', '', RELAY) == 'ack'
-    adm.require(B, 'nip04_decrypt')
+    assert adm.connect(B, '', '', RELAY) == 'ack' and adm.admitted(B)
     assert [(r.pubkey, r.via) for r in adm.clients()] == [(B, CONFIG)]
     refused('already admitted by connection.authorized_clients', adm.approve, B)
 
@@ -174,7 +150,7 @@ def test_approver_decides_and_sees_the_request():
     adm = memory(approver=approver)
     assert adm.connect(A, SECRET, 'sign_event:1', RELAY) == 'ack'
     refused('connection refused', adm.connect, B, SECRET, '', RELAY)
-    assert asked == [(A, 'sign_event:1'), (B, 'everything, no permissions requested')]
+    assert asked == [(A, 'sign_event:1'), (B, 'nothing listed')]
     assert adm.admitted(A) and not adm.admitted(B) and adm.pending() == []
 
 
@@ -193,7 +169,6 @@ def test_deferred_client_waits_and_is_approved_from_the_cli(tmp_path):
     approved = Admission(StateDir(tmp_path)).approve(A)
     assert approved.perms.items == frozenset({'sign_event:1'})
     assert bunker.admitted(A) and bunker.pending() == []
-    refused('sign_event for kind 3', bunker.require, A, 'sign_event', 3)
 
 
 def test_retry_while_pending_is_not_asked_for_a_rotated_secret(tmp_path):

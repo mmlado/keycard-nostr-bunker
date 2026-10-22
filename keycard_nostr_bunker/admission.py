@@ -1,8 +1,9 @@
 """Client admission: who may use the bunker, and with which permissions.
 
 A client gets in by presenting the connect secret, by being approved at the
-prompt or from the pending list, or by being listed in the config. An
-admitted client keeps the permissions it requested at connect.
+prompt or from the pending list, or by being listed in the config. The
+permissions it requests at connect are kept to show the user; what gets signed
+is up to the signing policy.
 """
 
 import hmac
@@ -244,8 +245,8 @@ class Admission:
 
     State lives in the state directory: the secret, the clients and pending
     files, and a lock file shared with the CLI. Without one it stays in memory
-    and the secret must be fixed. Clients in authorized get in without the secret
-    and are unrestricted; the list is read once, so changing it takes a restart.
+    and the secret must be fixed. Clients in authorized get in without the secret;
+    the list is read once, so changing it takes a restart.
     Safe to call from several threads.
     """
 
@@ -276,16 +277,6 @@ class Admission:
     def known(self, client: str) -> bool:
         """Admitted, or waiting for approval."""
         return self.admitted(client) or self._pending.get(client) is not None
-
-    def require(self, client: str, method: str, kind: int | None = None) -> None:
-        """Refuse a request the client may not make; pass the event kind for sign_event."""
-        perms = self._permissions(client)
-        if perms is None:
-            raise AdmissionError('unauthorized')
-        if not perms.allows(method, kind):
-            what = f'sign_event for kind {kind}' if method == 'sign_event' else method
-            log.info('%s from %s refused: not among its requested permissions', what, client)
-            raise AdmissionError(f'{what} is not among the permissions this client requested')
 
     def connect(self, client: str, secret: str, requested: object, via: str) -> str:
         """Handle a NIP-46 connect: return 'ack' or raise AdmissionError.
@@ -325,7 +316,7 @@ class Admission:
                 log.warning('client %s refused', client)
                 raise AdmissionError('connection refused')
             self._clients.put(replace(record, since=int(self._now())))
-        log.info('client %s admitted, permissions: %s', client, record.perms.describe())
+        log.info('client %s admitted, requested: %s', client, record.perms.describe())
         return 'ack'
 
     def clients(self) -> list[ClientRecord]:
@@ -338,7 +329,7 @@ class Admission:
         return self._pending.all()
 
     def approve(self, pubkey: str) -> ClientRecord:
-        """Admit a pending client, with the permissions it requested."""
+        """Admit a pending client."""
         with self._locks.held():
             if pubkey in self._authorized:
                 raise AdmissionError(f'{pubkey} is already admitted by '
@@ -353,7 +344,7 @@ class Admission:
             admitted = replace(record, since=int(self._now()))
             self._pending.remove(pubkey)
             self._clients.put(admitted)
-        log.info('client %s approved, permissions: %s', pubkey, admitted.perms.describe())
+        log.info('client %s approved, requested: %s', pubkey, admitted.perms.describe())
         return admitted
 
     def revoke(self, pubkey: str) -> Revocation:
@@ -367,9 +358,3 @@ class Admission:
                 self._secret.rotate()
         return Revocation(removed, dropped, pubkey in self._authorized, rotated,
                           knew_secret and not self._secret.rotatable)
-
-    def _permissions(self, client: str) -> Permissions | None:
-        if client in self._authorized:
-            return Permissions(None)
-        record = self._clients.get(client)
-        return None if record is None else record.perms

@@ -67,9 +67,9 @@ def test_clients_round_trip(tmp_path, capsys):
     out = capsys.readouterr().out.splitlines()
     assert out[:2] == ['No admitted clients', 'No clients waiting for approval']
     assert out[2].startswith(f'{PUBKEY}  20') and out[2].endswith(
-        'via wss://relay.example  permissions: sign_event:1')
-    assert out[3] == f'Approved {PUBKEY}, permissions: sign_event:1'
-    assert out[4].startswith(f'{PUBKEY}  20') and out[4].endswith('permissions: sign_event:1')
+        'via wss://relay.example  requested: sign_event:1')
+    assert out[3] == f'Approved {PUBKEY}, requested: sign_event:1'
+    assert out[4].startswith(f'{PUBKEY}  20') and out[4].endswith('requested: sign_event:1')
     assert out[5] == f'Revoked {PUBKEY}'
     assert out[6] == 'Secret rotated; the running bunker uses the new one at once.'
     assert out[7] == f'{PUBKEY} was not an admitted client'

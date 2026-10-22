@@ -92,23 +92,20 @@ def sign(b, kind):
     return call('sign_event', [{'kind': kind, 'content': '', 'created_at': 1700000000}], b)
 
 
-def test_requested_permissions_reach_every_method():
+def test_requested_permissions_do_not_limit_the_client():
     b = bunker(authorized=False)
-    call('connect', [TRANSPORT.pubkey.hex(), SECRET, 'sign_event:1,nip44_encrypt'], b)
+    call('connect', [TRANSPORT.pubkey.hex(), SECRET, 'sign_event:22242,nip44_encrypt'], b)
     assert sign(b, 1)['error'] is None
-    assert sign(b, 3)['error'] == ('sign_event for kind 3 is not among the permissions '
-                                   'this client requested')
     peer = THIRD_PARTY.pubkey.hex()
-    assert call('nip44_encrypt', [peer, 'x'], b)['error'] is None
-    assert call('nip44_decrypt', [peer, 'x'], b)['error'] == (
-        'nip44_decrypt is not among the permissions this client requested')
-    assert 'not among the permissions' in call('nip04_encrypt', [peer, 'x'], b)['error']
-    assert call('get_public_key', [], b)['result'] == USER.pubkey.hex()
+    sealed = call('nip44_encrypt', [peer, 'note'], b)['result']
+    assert call('nip44_decrypt', [peer, sealed], b)['result'] == 'note'
+    sealed = call('nip04_encrypt', [peer, 'old'], b)['result']
+    assert call('nip04_decrypt', [peer, sealed], b)['result'] == 'old'
 
 
-def test_signing_policy_applies_before_permissions():
+def test_signing_policy_decides_for_every_client():
     b = bunker('allowed_kinds', [1, 7], authorized=False)
-    call('connect', [TRANSPORT.pubkey.hex(), SECRET, 'sign_event'], b)
+    call('connect', [TRANSPORT.pubkey.hex(), SECRET, 'sign_event:3'], b)
     assert sign(b, 7)['error'] is None
     assert sign(b, 3)['error'] == 'kind 3 is not in signing.allowed_kinds'
 
