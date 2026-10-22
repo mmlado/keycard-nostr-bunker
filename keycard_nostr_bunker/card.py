@@ -22,7 +22,7 @@ from smartcard.pcsc.PCSCExceptions import BaseSCardException
 from smartcard.System import readers as pcsc_readers
 
 from . import schnorr
-from .pcsc import PcscLost, PcscPresence, Presence
+from .pcsc import PcscLost, PcscPresence, Presence, hint
 from .state import StateDir, write_private
 from .config import KeycardConfig
 from .signer import SignerUnavailable
@@ -35,7 +35,6 @@ MIN_APPLET_VERSION = (4, 0)
 WAIT_MS = 1000
 RETRY_MIN = 1.0
 RETRY_MAX = 30.0
-PCSC_HINT = 'is pcscd running? (systemctl enable --now pcscd.socket)'
 
 
 class CardError(Exception):
@@ -54,7 +53,7 @@ def list_readers() -> list[str]:
     try:
         return [str(reader) for reader in pcsc_readers()]
     except (SmartcardException, BaseSCardException) as e:
-        raise CardError(f'PC/SC not available: {e}; {PCSC_HINT}') from e
+        raise CardError(f'PC/SC not available: {e}; {hint(e.hresult)}') from e
 
 
 class _Session:

@@ -389,12 +389,14 @@ def test_trusted_cas(rig):
                                 bytes.fromhex(dev)]
 
 
-def test_list_readers_without_pcscd(monkeypatch):
+@pytest.mark.parametrize('hresult,hint', [
+    (0x8010001D, 'is pcscd running'), (0x8010006A, 'polkit')])
+def test_list_readers_without_pcscd(monkeypatch, hresult, hint):
     from smartcard.pcsc.PCSCExceptions import EstablishContextException
 
     def broken():
-        raise EstablishContextException(0x8010001D)
+        raise EstablishContextException(hresult)
 
     monkeypatch.setattr(card_module, 'pcsc_readers', broken)
-    with pytest.raises(CardError, match='pcscd'):
+    with pytest.raises(CardError, match=hint):
         list_readers()

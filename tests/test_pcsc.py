@@ -11,6 +11,7 @@ from smartcard.scard import (
     SCARD_STATE_EMPTY,
     SCARD_STATE_PRESENT,
     SCARD_STATE_UNAWARE,
+    SCARD_W_SECURITY_VIOLATION,
 )
 
 from keycard_nostr_bunker import pcsc
@@ -86,6 +87,12 @@ def test_lost_context_is_released_and_established_again(scard):
 def test_without_pcscd(scard):
     scard.establish = SCARD_E_NO_SERVICE
     with pytest.raises(PcscLost, match='Service not available'):
+        PcscPresence().wait(10)
+
+
+def test_refused_by_polkit(scard):
+    scard.establish = SCARD_W_SECURITY_VIOLATION
+    with pytest.raises(PcscLost, match='Access denied.*polkit'):
         PcscPresence().wait(10)
 
 

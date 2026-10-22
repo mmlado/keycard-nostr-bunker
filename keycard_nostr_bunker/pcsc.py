@@ -12,12 +12,22 @@ from smartcard.scard import (
     SCARD_STATE_CHANGED,
     SCARD_STATE_PRESENT,
     SCARD_STATE_UNAWARE,
+    SCARD_W_SECURITY_VIOLATION,
     SCardEstablishContext,
     SCardGetErrorMessage,
     SCardGetStatusChange,
     SCardListReaders,
     SCardReleaseContext,
 )
+
+PCSC_HINT = 'is pcscd running? (systemctl enable --now pcscd.socket)'
+POLKIT_HINT = ('pcscd refused this user, as its polkit policy does outside an active login '
+               'session; see "As a service" in the README')
+
+
+def hint(hresult: int | None) -> str:
+    """What to check when pcscd cannot be reached."""
+    return POLKIT_HINT if hresult == SCARD_W_SECURITY_VIOLATION else PCSC_HINT
 
 
 class PcscLost(Exception):
@@ -45,7 +55,7 @@ class PcscPresence:
         if self._context is None:
             hresult, context = SCardEstablishContext(SCARD_SCOPE_USER)
             if hresult != SCARD_S_SUCCESS:
-                raise PcscLost(SCardGetErrorMessage(hresult))
+                raise PcscLost(_reason(hresult))
             self._context, self._states = context, {}
         hresult, readers = SCardListReaders(self._context, [])
         if hresult == SCARD_E_NO_READERS_AVAILABLE:
@@ -73,4 +83,9 @@ class PcscPresence:
 
     def _lost(self, hresult: int) -> None:
         self.close()
-        raise PcscLost(SCardGetErrorMessage(hresult))
+        raise PcscLost(_reason(hresult))
+
+
+def _reason(hresult: int) -> str:
+    message = SCardGetErrorMessage(hresult)
+    return f'{message} {POLKIT_HINT}' if hresult == SCARD_W_SECURITY_VIOLATION else message
