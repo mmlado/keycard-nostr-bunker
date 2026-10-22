@@ -1,10 +1,13 @@
 import asyncio
 import json
+import threading
+import time
 
 import pytest
 from websockets.exceptions import ConnectionClosed
 from websockets.protocol import State
 
+from keycard_nostr_bunker import relay as relay_module
 from keycard_nostr_bunker.relay import RelayConn, RelayPool
 
 
@@ -152,8 +155,16 @@ def pool_with(serve, failing=()):
     return pool, relays
 
 
-def deliver(relay, message):
-    asyncio.run(relay.handler(message, relay))
+def deliver(pool, relay, message):
+    async def main():
+        await relay.handler(message, relay)
+        await pool.stop()
+
+    asyncio.run(main())
+
+
+def event(client, event_id='e'):
+    return ['EVENT', 'nip46', {'id': event_id, 'pubkey': client}]
 
 
 def test_a_reply_goes_to_every_relay_even_if_one_fails():
@@ -164,14 +175,14 @@ def test_a_reply_goes_to_every_relay_even_if_one_fails():
         return {'id': 'reply'}
 
     pool, (a, b, c) = pool_with(serve, failing={'wss://b'})
-    deliver(a, ['EVENT', 'nip46', {'id': 'request'}])
+    deliver(pool, a, ['EVENT', 'nip46', {'id': 'request'}])
     assert served == [({'id': 'request'}, 'wss://a')]
     assert a.sent == c.sent == [['EVENT', {'id': 'reply'}]]
 
 
 def test_no_reply_sends_nothing():
     pool, relays = pool_with(lambda event, source: None)
-    deliver(relays[0], ['EVENT', 'nip46', {'id': 'request'}])
+    deliver(pool, relays[0], ['EVENT', 'nip46', {'id': 'request'}])
     assert all(r.sent == [] for r in relays)
 
 
@@ -180,7 +191,7 @@ def test_a_failing_request_is_logged_and_contained(caplog):
         raise RuntimeError('broken')
 
     pool, relays = pool_with(serve)
-    deliver(relays[0], ['EVENT', 'nip46', {'id': 'request'}])
+    deliver(pool, relays[0], ['EVENT', 'nip46', {'id': 'request'}])
     assert all(r.sent == [] for r in relays)
     assert 'request handling failed' in caplog.text
 
@@ -189,16 +200,104 @@ def test_a_failing_request_is_logged_and_contained(caplog):
                                      ['EVENT', 'nip46', 'not an object'], ['WHAT']])
 def test_other_messages_are_only_logged(message):
     pool, relays = pool_with(lambda event, source: pytest.fail('served'))
-    deliver(relays[0], message)
+    deliver(pool, relays[0], message)
     assert all(r.sent == [] for r in relays)
 
 
 def test_a_rejected_reply_is_a_warning(caplog):
     pool, relays = pool_with(lambda event, source: None)
-    deliver(relays[0], ['OK', 'abcdef0123', False, 'blocked: rate limited'])
-    deliver(relays[0], ['OK', '9876543210', True, ''])
+    deliver(pool, relays[0], ['OK', 'abcdef0123', False, 'blocked: rate limited'])
+    deliver(pool, relays[0], ['OK', '9876543210', True, ''])
     assert [(r.levelname, r.getMessage()) for r in caplog.records] == [
         ('WARNING', 'wss://a rejected reply abcdef01: blocked: rate limited')]
+
+
+def test_a_slow_request_holds_up_only_its_client():
+    release = threading.Event()
+    served = []
+
+    def serve(event, source):
+        if event['pubkey'] == 'slow':
+            release.wait(5)
+        served.append(event['pubkey'])
+        return {'id': 'reply-' + event['pubkey']}
+
+    pool, (a, b, c) = pool_with(serve)
+
+    async def main():
+        await a.handler(event('slow'), a)
+        await a.handler(event('quick'), a)
+        for _ in range(200):
+            if served:
+                break
+            await asyncio.sleep(0.01)
+        assert served == ['quick']
+        release.set()
+        await pool.stop()
+
+    asyncio.run(main())
+    assert served == ['quick', 'slow']
+    assert a.sent == [['EVENT', {'id': 'reply-quick'}], ['EVENT', {'id': 'reply-slow'}]]
+
+
+def test_one_clients_requests_are_served_one_at_a_time_in_order():
+    lock = threading.Lock()
+    running, most, order = [0], [0], []
+
+    def serve(event, source):
+        with lock:
+            running[0] += 1
+            most[0] = max(most[0], running[0])
+        time.sleep(0.02)
+        with lock:
+            order.append(event['id'])
+            running[0] -= 1
+        return None
+
+    pool, (a, b, c) = pool_with(serve)
+
+    async def main():
+        for i in range(5):
+            await a.handler(event('same', str(i)), a)
+        await pool.stop()
+
+    asyncio.run(main())
+    assert order == ['0', '1', '2', '3', '4'] and most[0] == 1
+
+
+def test_a_flood_waits_at_the_cap(monkeypatch):
+    monkeypatch.setattr(relay_module, 'MAX_IN_FLIGHT', 2)
+    release = threading.Event()
+    pool, (a, b, c) = pool_with(lambda event, source: release.wait(5) and None)
+
+    async def main():
+        await a.handler(event('one'), a)
+        await a.handler(event('two'), a)
+        third = asyncio.create_task(a.handler(event('three'), a))
+        await asyncio.sleep(0.05)
+        assert not third.done()
+        release.set()
+        await asyncio.wait_for(third, 5)
+        await pool.stop()
+
+    asyncio.run(main())
+
+
+def test_stop_gives_up_on_a_hung_request(monkeypatch):
+    monkeypatch.setattr(relay_module, 'STOP_GRACE', 0.05)
+    release = threading.Event()
+    pool, relays = pool_with(lambda event, source: release.wait(5) and None)
+
+    async def main():
+        await relays[0].handler(event('stuck'), relays[0])
+        await asyncio.wait_for(pool.stop(), 2)
+        release.set()
+
+    try:
+        asyncio.run(main())
+    finally:
+        release.set()
+    assert all(r.stopped for r in relays)
 
 
 def test_start_and_stop_reach_every_relay():

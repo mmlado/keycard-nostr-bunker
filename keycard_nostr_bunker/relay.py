@@ -17,6 +17,8 @@ RECONNECT_MAX = 30.0
 RESUBSCRIBE_MIN = 5.0
 RESUBSCRIBE_MAX = 300.0
 SUBSCRIPTION_ID = 'nip46'
+MAX_IN_FLIGHT = 64
+STOP_GRACE = 5.0
 
 
 class Relay(Protocol):
@@ -139,38 +141,52 @@ class RelayConn:
 Serve = Callable[[dict[str, Any], str], dict[str, Any] | None]
 
 
+class _Turns:
+    """One client's requests, served one at a time in the order they came."""
+
+    def __init__(self) -> None:
+        self.lock = asyncio.Lock()
+        self.waiting = 0
+
+
 class RelayPool:
     """Every relay the bunker uses: requests come in from any, replies go out to all.
 
     serve turns a request event and the URL it came from into a reply event, or
-    None; it runs on a worker thread, so a slow card does not stall the relays.
+    None. It runs on a worker thread, one request per client at a time, so a slow
+    request, such as an approval prompt or a card reopen, holds up only its client.
     """
 
     def __init__(self, urls: list[str], pubkey_hex: str, serve: Serve,
                  factory: RelayFactory = RelayConn):
         self._serve = serve
         self._relays = [factory(url, pubkey_hex, self._on_message) for url in urls]
+        self._in_flight: set[asyncio.Task] = set()
+        self._turns: dict[str, _Turns] = {}
 
     def start(self) -> None:
         for relay in self._relays:
             relay.start()
 
     async def stop(self) -> None:
+        """Answer the requests already taken, unless one hangs, then close the relays."""
+        if self._in_flight:
+            await asyncio.wait(set(self._in_flight), timeout=STOP_GRACE)
+        for task in self._in_flight:
+            task.cancel()
+        await asyncio.gather(*self._in_flight, return_exceptions=True)
         for relay in self._relays:
             await relay.stop()
 
     async def _on_message(self, message: list, relay: Relay) -> None:
         match message:
             case ['EVENT', _, dict() as event]:
-                try:
-                    reply = await asyncio.to_thread(self._serve, event, relay.url)
-                except Exception:
-                    log.exception('NIP-46 request handling failed')
-                    return
-                if reply:
-                    # One relay failing must not keep the reply from the others.
-                    await asyncio.gather(*(r.send(['EVENT', reply]) for r in self._relays),
-                                         return_exceptions=True)
+                # A flood waits here, on the relay's read loop, instead of piling up tasks.
+                while len(self._in_flight) >= MAX_IN_FLIGHT:
+                    await asyncio.wait(self._in_flight, return_when=asyncio.FIRST_COMPLETED)
+                task = asyncio.create_task(self._handle(event, relay))
+                self._in_flight.add(task)
+                task.add_done_callback(self._in_flight.discard)
             case ['OK', event_id, accepted, *rest]:
                 reason = rest[0] if rest else ''
                 if accepted:
@@ -183,3 +199,27 @@ class RelayPool:
                 log.debug('EOSE from %s', relay.url)
             case _:
                 log.debug('Ignored relay message: %s', message[0])
+
+    async def _handle(self, event: dict[str, Any], relay: Relay) -> None:
+        # Unverified here; a forged pubkey only queues behind that client's requests.
+        client = str(event.get('pubkey'))
+        turns = self._turns.setdefault(client, _Turns())
+        turns.waiting += 1
+        try:
+            async with turns.lock:
+                await self._serve_one(event, relay)
+        finally:
+            turns.waiting -= 1
+            if not turns.waiting:
+                del self._turns[client]
+
+    async def _serve_one(self, event: dict[str, Any], relay: Relay) -> None:
+        try:
+            reply = await asyncio.to_thread(self._serve, event, relay.url)
+        except Exception:
+            log.exception('NIP-46 request handling failed')
+            return
+        if reply:
+            # One relay failing must not keep the reply from the others.
+            await asyncio.gather(*(r.send(['EVENT', reply]) for r in self._relays),
+                                 return_exceptions=True)
