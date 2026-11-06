@@ -67,16 +67,47 @@ card.transport.connect()
 card.select()
 card.init('123456', '987654321098')          # PIN, PUK; opens the secure channel
 card.verify_pin('123456')
-card.generate_key()                          # a fresh key that lives only on the card
+
+# 24 words from the card's random number generator: write them down, offline.
+words = ' '.join(Mnemonic('english').wordlist[i] for i in card.generate_mnemonic(checksum_size=8))
+print(words)
+card.load_key(LoadKeyType.BIP39_SEED, bip39_seed=Mnemonic.to_seed(words))
 # or, to keep an identity you already have as a mnemonic:
 # card.load_key(LoadKeyType.BIP39_SEED, bip39_seed=Mnemonic.to_seed('your twelve words'))
 ```
+
+The words are the only backup of your Nostr key; see [Backup and recovery](#backup-and-recovery). `card.generate_key()` instead of loading words makes a key that exists on the card alone: lose or break the card, or block its PIN and PUK, and that identity is gone for good.
 
 [keycard-cli](https://github.com/keycard-tech/keycard-cli) does the same with `keycard init` and `keycard shell`.
 
 **Can I keep my npub?** Only if your identity exists as a mnemonic (NIP-06) and you load that seed: with `key_path = "m/44'/1237'/0'/0/0"` the card derives the same key as any NIP-06 wallet. A bare `nsec` cannot be loaded as a derived key, so an nsec-only identity means a new npub.
 
 **Certificates.** Applet 4.x cards prove they are genuine with an Identity Certificate. Store-bought 4.x cards, once they exist, will carry one from the official CA, trusted by default. A development card carries one from the Test CA (`trust_test_ca = true`) or from your own CA (`ca_public_keys`). Trust the Test CA only on machines you control, since anyone can sign with it.
+
+## Backup and recovery
+
+**Your Nostr key** is on the card, and the words you wrote down at setup are its only copy. Keep them offline, never in a file or a photo. They restore the key in two ways:
+
+- **On a new card:** load the same words and keep the same `key_path`. The npub stays the same, and so does the card's key UID, which comes from the key, so the bunker takes the new card as the old one.
+- **Without a card:** derive the key from the words on an offline machine and use it as an `nsec` in any client or signer. With `pip install embit`:
+
+```python
+from embit import bip32, bip39
+from embit.bech32 import Encoding, bech32_encode, convertbits
+
+words = 'your twenty-four words'
+key_path = "m/43'/60'/1581'/0'/0"            # the key_path in your config
+key = bip32.HDKey.from_seed(bip39.mnemonic_to_seed(words)).derive(key_path.replace("'", 'h')).key
+print('public key:', key.get_public_key().xonly().hex())
+# To restore, also print the nsec:
+# print(bech32_encode(Encoding.BECH32, 'nsec', convertbits(key.secret, 8, 5)))
+```
+
+Check the backup once, right after setup: the public key it prints must be the `User pubkey` the bunker logs at start. NIP-06 wallets also restore a key from words, but only on the NIP-06 path, `m/44'/1237'/0'/0/0`, and the NIP is now marked unrecommended, so the derivation above is the dependable way.
+
+**The bunker's state** holds no key of yours. Lose `signer.key`, `clients` and `secret`, and the bunker makes a new transport key: every client connects again with the new `keycard-nostr-bunker url`.
+
+**A reinstalled client** has a new client key. Give it a fresh URL from `keycard-nostr-bunker url`, and remove the old entry with `clients revoke`.
 
 ## Configuration
 
