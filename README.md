@@ -24,12 +24,9 @@ Nostr client ──NIP-46──▶ relay ──NIP-46──▶ keycard-nostr-bun
 ## Requirements
 
 - Python 3.11 or later
-- A Keycard **development card** with applet 4.0.1 or later. Keycards sold in stores still ship applet 3.x, which has no Schnorr and no ECDH, so the bunker refuses them. [Get a development card](https://keycard.tech/6cd6gk).
+- A Keycard **development card** with applet 4.0.1 or later. Keycards sold in stores still ship applet 3.x, which has no Schnorr and no ECDH, so the bunker refuses them. [Get a development card](https://keycard.tech/products/keycard-for-developers).
 - A PC/SC reader and `pcscd` running: `sudo systemctl enable --now pcscd.socket`
 - To build `pyscard`, which has no Linux wheels on PyPI: a C compiler, `swig`, Python headers and pcsc-lite headers. Fedora: `sudo dnf install gcc swig python3-devel pcsc-lite-devel`. Debian and Ubuntu: `sudo apt install build-essential swig python3-dev libpcsclite-dev`.
-
-> **Advertisement:** the development card link above is an affiliate link. The developer earns a
-> commission on purchases made through it. Nothing in keycard-nostr-bunker depends on buying through it.
 
 ## Installation
 
